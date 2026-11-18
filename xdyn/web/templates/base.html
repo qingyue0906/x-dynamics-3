@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ page_title or 'X 媒体画廊' }} · X 媒体画廊</title>
+    <script>
+        (function () {
+            try {
+                var saved = localStorage.getItem('theme');
+                var theme = saved || (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+                document.documentElement.dataset.theme = theme;
+            } catch (e) {}
+        })();
+    </script>
+    <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+</head>
+<body>
+<header class="topbar">
+    <div class="topbar-inner">
+        <a class="brand" href="{{ url_for('index') }}" aria-label="X 媒体画廊首页">
+            <span class="brand-mark">𝕏</span>
+            <span class="brand-text">媒体画廊</span>
+        </a>
+        <nav class="main-nav" aria-label="主导航">
+            <a class="{% if active_page == 'home' %}active{% endif %}" href="{{ url_for('index') }}">动态</a>
+            <a class="{% if active_page == 'users' %}active{% endif %}" href="{{ url_for('users_page') }}">用户</a>
+            <a class="{% if active_page == 'jobs' %}active{% endif %}" href="{{ url_for('jobs_page') }}">任务</a>
+            <a class="{% if active_page == 'settings' %}active{% endif %}" href="{{ url_for('settings_page') }}">设置</a>
+            <a class="{% if active_page == 'tweet' %}active{% endif %}" href="{{ url_for('tweet_page') }}">指定推文</a>
+        </nav>
+        <form class="search-form" action="{{ url_for('search') }}" method="get" role="search">
+            <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.6-3.6"></path></svg>
+            <input type="search" name="q" value="{{ query or '' }}" placeholder="搜索推文、作者、引用..." autocomplete="off" aria-label="搜索">
+        </form>
+        <div class="top-actions">
+            {% if active_job %}
+            <a class="job-pill" id="globalJobPill" href="{{ url_for('jobs_page') }}" title="当前任务">
+                <span class="job-dot"></span>
+                <span>{{ active_job.kind }}{% if active_job.total %} {{ active_job.done }}/{{ active_job.total }}{% endif %}</span>
+            </a>
+            {% endif %}
+            <span class="stat-pill">{{ stats.media_posts }} 条图文</span>
+            <button class="icon-btn" id="themeToggle" type="button" aria-label="切换深色模式" title="切换深色模式">
+                <span class="theme-icon">☾</span>
+            </button>
+        </div>
+    </div>
+</header>
+
+<div class="app-shell">
+    <aside class="sidebar">
+        <div class="side-title">
+            <span>作者</span>
+            <span class="side-total" id="sideTotal">{{ users|length }}</span>
+        </div>
+        <div class="side-filter">
+            <input type="search" id="authorFilter" placeholder="筛选作者 / @handle / ID..." autocomplete="off" aria-label="筛选作者">
+        </div>
+        <nav class="side-nav" id="authorList">
+            <a class="side-user {% if not current_user_id %}active{% endif %}" href="{{ url_for('index') }}">
+                <span class="avatar avatar-all">全</span>
+                <span class="side-user-info">
+                    <span class="side-user-name">全部动态</span>
+                    <span class="side-user-count">{{ stats.posts if web_settings.show_empty_posts else stats.media_posts }} 条</span>
+                </span>
+            </a>
+            {% set real_users = users|selectattr('kind', 'equalto', 'user')|list %}
+            {% set collections = users|rejectattr('kind', 'equalto', 'user')|list %}
+            {% for u in real_users %}
+            <a class="side-user {% if current_user_id == u.id %}active{% endif %}" href="{{ url_for('user_page', user_id=u.id) }}" data-name="{{ u.name }}" data-screen="{{ u.screen_name }}" data-id="{{ u.id }}">
+                <span class="avatar" style="--hue: {{ u.id % 360 }}">
+                    <img src="{{ url_for('avatar', user_id=u.id, v=u.avatar_updated_at or 0) }}" alt="">
+                </span>
+                <span class="side-user-info">
+                    <span class="side-user-name" title="{{ u.name }}">{{ u.name }}</span>
+                    <span class="side-user-count">{{ u.post_count if web_settings.show_empty_posts else u.media_post_count }} 条</span>
+                </span>
+            </a>
+            {% endfor %}
+            {% if collections %}
+            <div class="collection-group-title">导入集合</div>
+            {% for u in collections %}
+            <a class="side-user {% if current_user_id == u.id %}active{% endif %}" href="{{ url_for('user_page', user_id=u.id) }}" data-name="{{ u.name }}" data-screen="{{ u.screen_name }}" data-id="{{ u.id }}">
+                <span class="avatar" style="--hue: {{ u.id % 360 }}"><span class="avatar-all">{{ '#' if u.kind == 'tag' else '回' }}</span></span>
+                <span class="side-user-info">
+                    <span class="side-user-name" title="{{ u.name }}">{{ u.name }}</span>
+                    <span class="side-user-count">{{ u.post_count }} 条</span>
+                </span>
+            </a>
+            {% endfor %}
+            {% endif %}
+        </nav>
+        <div class="side-footer">
+            <span>{{ stats.ok_media }} 个本地媒体</span>
+            <span>{{ stats.bytes|filesizeformat }}</span>
+        </div>
+    </aside>
+
+    <main class="main">
+        {% block content %}{% endblock %}
+    </main>
+</div>
+
+<div id="lightbox" class="lightbox" hidden aria-hidden="true" role="dialog" aria-label="媒体查看器">
+    <div class="lb-backdrop" data-close></div>
+    <button class="lb-close" type="button" data-close aria-label="关闭">×</button>
+    <button class="lb-arrow lb-prev" id="lbPrev" type="button" aria-label="上一个">‹</button>
+    <div class="lb-stage">
+        <img id="lbImage" alt="" hidden>
+        <video id="lbVideo" controls loop playsinline hidden></video>
+    </div>
+    <button class="lb-arrow lb-next" id="lbNext" type="button" aria-label="下一个">›</button>
+    <div class="lb-bar">
+        <span id="lbCaption" class="lb-caption"></span>
+        <span id="lbCounter" class="lb-counter"></span>
+        <div class="lb-actions">
+            <a id="lbTweet" href="#" target="_blank" rel="noopener">查看原推</a>
+            <a id="lbDownload" href="#" download>下载原文件</a>
+        </div>
+    </div>
+</div>
+
+<div id="toastHost" class="toast-host" aria-live="polite"></div>
+<script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

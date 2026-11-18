@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="user-banner">
+    {% if user.banner_file %}<img src="{{ url_for('banner', user_id=user.id) }}" alt="">{% endif %}
+</section>
+<section class="panel user-hero">
+    <span class="avatar" style="--hue: {{ user.id % 360 }}">
+        <img src="{{ url_for('avatar', user_id=user.id, v=user.avatar_updated_at or 0) }}" alt="">
+    </span>
+    <div class="user-hero-info">
+        <h1>{{ user.name }} <span class="user-kind-badge">{{ user.kind }}</span></h1>
+        <div class="sub">
+            {% if user.screen_name %}@{{ user.screen_name }} · {% endif %}
+            {% if user.rest_id %}ID {{ user.rest_id }} · {% endif %}
+            {% if user.last_sync_at %}上次同步 {{ user.last_sync_at|timestamp_time }}{% else %}尚未同步{% endif %}
+        </div>
+        {% if user.bio %}<p class="user-bio">{{ user.bio }}</p>{% endif %}
+        <div class="user-stats">
+            <span>{{ user.tweet_count }} 推文</span>
+            <span>{{ user.followers_count }} 粉丝</span>
+            <span>{{ user.following_count }} 关注</span>
+            <span>{{ user.post_count }} 条归档 · {{ user.ok_media_count }} 媒体</span>
+        </div>
+        <div class="user-toolbar">
+            {% if user.kind == 'user' %}
+            <button class="btn-primary" type="button" data-sync-user="{{ user.id }}">同步这个用户</button>
+            <select class="mode-select" data-mode-user="{{ user.id }}">
+                <option value="media" {% if user.sync_mode == 'media' %}selected{% endif %}>仅媒体</option>
+                <option value="timeline" {% if user.sync_mode == 'timeline' %}selected{% endif %}>全部推文</option>
+                <option value="replies" {% if user.sync_mode == 'replies' %}selected{% endif %}>全部+回复</option>
+                <option value="none" {% if user.sync_mode == 'none' %}selected{% endif %}>不同步</option>
+            </select>
+            {% endif %}
+            {% if user.screen_name %}<a class="btn-ghost" href="https://x.com/{{ user.screen_name }}" target="_blank" rel="noopener">打开 X ↗</a>{% endif %}
+        </div>
+    </div>
+</section>
+
+{% include "partials/feed_controls.html" %}
+
+<div id="feed"
+     data-mode="{{ mode }}"
+     data-load="{{ load_mode }}"
+     data-next-offset="{{ next_offset }}"
+     data-sort="{{ sort }}"
+     data-query="{{ query or '' }}"
+     data-user-id="{{ current_user_id }}">
+    {% if mode == 'images' %}
+    <div class="album-grid" id="postList" data-lightbox-group>
+        {% include "partials/album_list.html" %}
+    </div>
+    {% else %}
+    <div class="post-list" id="postList">
+        {% include "partials/post_list.html" %}
+    </div>
+    {% endif %}
+    <div class="empty" id="feedEmpty" {% if total %}hidden{% endif %}>这个用户还没有归档内容。</div>
+    <div class="feed-more" id="feedMore" {% if not has_more %}hidden{% endif %}>
+        <button class="btn-ghost" type="button" id="loadMore">加载更多</button>
+    </div>
+    <div id="feedSentinel" class="feed-sentinel"></div>
+    {% if load_mode == 'pages' %}{% include "partials/pagination.html" %}{% endif %}
+</div>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/user.js') }}" defer></script>{% endblock %}

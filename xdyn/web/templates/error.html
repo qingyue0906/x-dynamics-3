@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-head">
+    <div>
+        <h1>{{ code }}</h1>
+        <p class="sub">{{ message }}</p>
+    </div>
+</section>
+<section class="panel">
+    <a class="btn-primary" href="{{ url_for('index') }}">回到首页</a>
+</section>
+{% endblock %}

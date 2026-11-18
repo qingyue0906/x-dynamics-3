@@ -1,0 +1,170 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-head">
+    <div>
+        <h1>设置</h1>
+        <p class="sub">当前数据目录：<code>{{ data_dir }}</code>；{{ stats.users }} 个用户、{{ stats.posts }} 条推文、{{ stats.media }} 个媒体</p>
+    </div>
+</section>
+
+<div class="settings-grid">
+    <section class="panel">
+        <div class="panel-head">
+            <div>
+                <h2>X Cookie</h2>
+                <p class="sub">保存在 data/config/cookies.json，不进入日志、导出或 Web 静态目录。</p>
+            </div>
+            <span class="status-pill {{ 'status-succeeded' if cookie.configured else 'status-failed' }}">{{ '已保存' if cookie.configured else '未配置' }}</span>
+        </div>
+        <form id="cookieForm" class="form-stack">
+            <label>完整 Cookie 字符串（推荐）
+                <textarea class="input" name="cookie" rows="3" placeholder="auth_token=...; ct0=...; 也可以粘贴浏览器导出的 JSON"></textarea>
+            </label>
+            <label>auth_token
+                <input type="password" class="input" name="auth_token" autocomplete="off" placeholder="{{ '已配置，留空不修改' if cookie.auth_token else '必填' }}">
+            </label>
+            <label>ct0
+                <input type="password" class="input" name="ct0" autocomplete="off" placeholder="{{ '已配置，留空不修改' if cookie.ct0 else '必填' }}">
+            </label>
+            <div class="form-actions">
+                <button class="btn-primary" type="submit">保存并验证</button>
+                <button class="btn-ghost" type="button" id="testCookie">测试连接</button>
+                <button class="btn-mini danger" type="button" id="clearCookie">清除 Cookie</button>
+            </div>
+            <p class="form-hint" id="cookieHint">需要 auth_token 和 ct0。Cookie 只用于本地同步；请确保账号和网络环境允许访问 x.com。</p>
+        </form>
+    </section>
+
+    <section class="panel">
+        <div class="panel-head">
+            <div>
+                <h2>同步参数</h2>
+                <p class="sub">修改后对下一个任务生效，不需要重启服务。</p>
+            </div>
+        </div>
+        <form id="syncOptionsForm" class="form-grid">
+            <label>翻页间隔（秒）
+                <input type="number" class="input" name="sleep" min="0" max="300" step="0.5" value="{{ sync.sleep }}">
+            </label>
+            <label>随机抖动
+                <input type="number" class="input" name="jitter" min="0" max="1" step="0.05" value="{{ sync.jitter }}">
+            </label>
+            <label>重试次数
+                <input type="number" class="input" name="retries" min="0" max="10" step="1" value="{{ sync.retries }}">
+            </label>
+            <label>下载并发
+                <input type="number" class="input" name="download_concurrency" min="1" max="12" step="1" value="{{ sync.download_concurrency }}">
+            </label>
+            <label>头像请求间隔（秒）
+                <input type="number" class="input" name="avatar_sleep" min="0" max="30" step="0.5" value="{{ sync.avatar_sleep }}">
+            </label>
+            <label>每页请求条数
+                <input type="number" class="input" name="page_size" min="10" max="100" step="10" value="{{ sync.page_size }}">
+            </label>
+            <label>每次最多页数
+                <input type="number" class="input" name="max_pages" min="0" step="1" value="{{ sync.max_pages }}">
+            </label>
+            <label>每次最多媒体
+                <input type="number" class="input" name="max_media" min="0" step="1" value="{{ sync.max_media }}">
+            </label>
+            <label>连续空页上限
+                <input type="number" class="input" name="max_empty_pages" min="1" max="20" step="1" value="{{ sync.max_empty_pages }}">
+            </label>
+            <label>图片格式
+                <select class="input" name="image_format">
+                    <option value="orig" {% if sync.image_format == 'orig' %}selected{% endif %}>原图（推荐）</option>
+                    <option value="jpg" {% if sync.image_format == 'jpg' %}selected{% endif %}>统一 JPG</option>
+                    <option value="png" {% if sync.image_format == 'png' %}selected{% endif %}>统一 PNG</option>
+                </select>
+            </label>
+            <label>代理
+                <input type="text" class="input" name="proxy" value="{{ sync.proxy }}" placeholder="http://127.0.0.1:7890 或 socks5://...">
+            </label>
+            <label>API 传输
+                <select class="input" name="api_backend">
+                    <option value="httpx" {% if sync.api_backend == 'httpx' %}selected{% endif %}>httpx（默认）</option>
+                    <option value="curl" {% if sync.api_backend == 'curl' %}selected{% endif %}>curl_cffi（需要额外安装）</option>
+                </select>
+            </label>
+            <label class="check"><input type="checkbox" name="include_retweets" {% if sync.include_retweets %}checked{% endif %}> timeline/replies 默认包含转推</label>
+            <label class="check"><input type="checkbox" name="download_quoted_media" {% if sync.download_quoted_media %}checked{% endif %}> 下载引用推文媒体（暂不启用）</label>
+            <label class="check span-2"><input type="checkbox" name="export_json" {% if sync.export_json %}checked{% endif %}> 同步后导出每用户 JSON</label>
+            <div class="form-actions span-2">
+                <button class="btn-primary" type="submit">保存同步参数</button>
+            </div>
+        </form>
+    </section>
+</div>
+
+<section class="panel">
+    <div class="panel-head">
+        <div>
+            <h2>WebUI 显示</h2>
+            <p class="sub">只影响页面展示和分页方式，不影响抓取、下载和文件。</p>
+        </div>
+    </div>
+    <form id="webOptionsForm" class="form-grid">
+        <label>动态模式每页条数
+            <input type="number" class="input" name="page_size" min="1" max="60" step="1" value="{{ web.page_size }}">
+        </label>
+        <label>媒体模式每页数量
+            <input type="number" class="input" name="media_page_size" min="1" max="120" step="1" value="{{ web.media_page_size }}">
+        </label>
+        <label>默认视图
+            <select class="input" name="default_view">
+                <option value="dynamic" {% if web.default_view == 'dynamic' %}selected{% endif %}>动态</option>
+                <option value="images" {% if web.default_view == 'images' %}selected{% endif %}>媒体</option>
+            </select>
+        </label>
+        <label>默认排序
+            <select class="input" name="default_sort">
+                <option value="desc" {% if web.default_sort == 'desc' %}selected{% endif %}>最新</option>
+                <option value="asc" {% if web.default_sort == 'asc' %}selected{% endif %}>最早</option>
+            </select>
+        </label>
+        <label>默认加载方式
+            <select class="input" name="default_load">
+                <option value="infinite" {% if web.default_load == 'infinite' %}selected{% endif %}>无限滚动</option>
+                <option value="pages" {% if web.default_load == 'pages' %}selected{% endif %}>分页</option>
+            </select>
+        </label>
+        <label class="check"><input type="checkbox" name="show_empty_posts" {% if web.show_empty_posts %}checked{% endif %}> 动态模式显示无媒体推文</label>
+        <label class="check"><input type="checkbox" name="show_missing_media" {% if web.show_missing_media %}checked{% endif %}> 媒体模式显示失效占位</label>
+        <label class="check"><input type="checkbox" name="blur_sensitive" {% if web.blur_sensitive %}checked{% endif %}> 默认模糊敏感媒体（实验）</label>
+        <div class="form-actions span-2">
+            <button class="btn-primary" type="submit">保存显示设置</button>
+        </div>
+    </form>
+</section>
+
+<section class="panel">
+    <div class="panel-head">
+        <div>
+            <h2>数据工具</h2>
+            <p class="sub">这些操作会在“任务”页显示进度，不要重复点击。</p>
+        </div>
+    </div>
+    <div class="toolbar wrap">
+        <button class="btn-ghost" type="button" id="verifyOnly">校验本地媒体</button>
+        <button class="btn-ghost" type="button" id="verifyRepair">校验并补下</button>
+        <button class="btn-ghost" type="button" id="retryAllSettings">重试失败项</button>
+        <button class="btn-ghost" type="button" id="refreshAvatarsSettings">补全所有头像</button>
+        <button class="btn-ghost" type="button" id="syncAllSettings">同步全部用户</button>
+    </div>
+</section>
+
+<section class="panel">
+    <div class="panel-head">
+        <div>
+            <h2>旧数据迁移</h2>
+            <p class="sub">使用命令行导入 twitter_download 的 downloads 目录；默认复制到 data/images。</p>
+        </div>
+    </div>
+    <p class="prose">
+        <code>python -m xdyn migrate --src "旧 downloads 路径" --dry-run</code><br>
+        <code>python -m xdyn migrate --src "旧 downloads 路径"</code><br>
+        迁移器不解码 feed 中的图片/视频内容；`profile/` 头像和横幅会转成本地 WebP。支持主用户媒体、文本、标签、评论区、profile 头像/横幅。
+    </p>
+</section>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/settings.js') }}" defer></script>{% endblock %}

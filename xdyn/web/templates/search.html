@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-head">
+    <div>
+        <h1>{{ page_title }}</h1>
+        <p class="sub">在推文正文、作者、引用内容中搜索。</p>
+    </div>
+</section>
+
+<form class="panel search-panel" action="{{ url_for('search') }}" method="get">
+    <div class="inline-form">
+        <input type="search" class="input" name="q" value="{{ query or '' }}" placeholder="关键词、@用户名..." autocomplete="off">
+        <select class="input" name="user_id">
+            <option value="">全部作者</option>
+            {% for u in users %}
+            <option value="{{ u.id }}" {% if current_user_id == u.id %}selected{% endif %}>{{ u.name }}{% if u.screen_name %} (@{{ u.screen_name }}){% endif %}</option>
+            {% endfor %}
+        </select>
+        <button class="btn-primary" type="submit">搜索</button>
+    </div>
+</form>
+
+{% include "partials/feed_controls.html" %}
+
+<div id="feed"
+     data-mode="{{ mode }}"
+     data-load="{{ load_mode }}"
+     data-next-offset="{{ next_offset }}"
+     data-sort="{{ sort }}"
+     data-query="{{ query or '' }}"
+     {% if current_user_id %}data-user-id="{{ current_user_id }}"{% endif %}>
+    {% if mode == 'images' %}
+    <div class="album-grid" id="postList" data-lightbox-group>{% include "partials/album_list.html" %}</div>
+    {% else %}
+    <div class="post-list" id="postList">{% include "partials/post_list.html" %}</div>
+    {% endif %}
+    <div class="empty" id="feedEmpty" {% if total %}hidden{% endif %}>没有匹配的内容。</div>
+    <div class="feed-more" id="feedMore" {% if not has_more %}hidden{% endif %}>
+        <button class="btn-ghost" type="button" id="loadMore">加载更多</button>
+    </div>
+    <div id="feedSentinel" class="feed-sentinel"></div>
+    {% if load_mode == 'pages' %}{% include "partials/pagination.html" %}{% endif %}
+</div>
+{% endblock %}

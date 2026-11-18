@@ -1,0 +1,84 @@
+{% set media_count = post.media|length %}
+<article class="post-card" data-tweet-id="{{ post.tweet_id }}">
+    {% if post.kind == 'retweet' %}
+    <div class="post-retweet-line">🔁 {{ post.owner_name or post.display_name }} 转推了</div>
+    {% endif %}
+    <header class="post-head">
+        <a class="avatar post-avatar" href="{{ url_for('user_page', user_id=post.user_id) }}" style="--hue: {{ post.user_id % 360 }}">
+            <img src="{{ url_for('avatar', user_id=post.user_id, v=post.owner_avatar_updated_at or 0) }}" alt="">
+        </a>
+        <div class="post-meta">
+            <a class="post-author" href="{{ url_for('user_page', user_id=post.user_id) }}">{{ post.display_name or post.owner_name or post.tweet_id }}</a>
+            <div class="post-sub">
+                {% if post.display_screen %}<span>@{{ post.display_screen }}</span>{% endif %}
+                <time>{{ post.time_str }}</time>
+                {% if post.kind == 'quote' %}<span class="badge-soft">引用</span>{% endif %}
+                {% if post.kind == 'reply' %}<span class="badge-soft">回复</span>{% endif %}
+                {% if post.possibly_sensitive %}<span class="badge-charge">敏感</span>{% endif %}
+                {% if post.media_count == 0 %}<span class="badge-soft">无媒体</span>{% endif %}
+            </div>
+        </div>
+        <a class="bili-link" href="{{ post.x_url }}" target="_blank" rel="noopener">原推 ↗</a>
+    </header>
+
+    {% if post.text %}<p class="post-desc">{{ post.text }}</p>{% endif %}
+
+    {% if post.quoted_id %}
+    <a class="post-quote" href="{{ post.quoted_url }}" target="_blank" rel="noopener">
+        <div class="post-quote-head">@{{ post.quoted_author or '引用推文' }}</div>
+        <div>{{ post.quoted_text }}</div>
+    </a>
+    {% endif %}
+
+    {% if media_count %}
+    <div class="post-media" data-count="{{ media_count }}" data-lightbox-group>
+        {% for item in post.media %}
+            {% if item.ok %}
+            {% set full_url = url_for('media', media_id=item.id) %}
+            {% set blur_media = web_settings.blur_sensitive and post.possibly_sensitive %}
+            {% if item.is_video %}
+            <button class="media-cell {% if blur_media %}sensitive-cover{% endif %}" type="button"
+                    data-full="{{ full_url }}" data-video="1"
+                    data-poster="{{ item.poster_url or '' }}"
+                    data-author="{{ post.display_name or '' }}"
+                    data-time="{{ post.time_str }}"
+                    data-tweet="{{ post.x_url }}"
+                    title="播放视频">
+                {% if item.poster_url %}
+                <img class="video-poster" src="{{ item.poster_url }}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer">
+                {% else %}
+                <img class="video-poster" src="{{ url_for('thumb', media_id=item.id) }}" alt="" loading="lazy" decoding="async">
+                {% endif %}
+                <span class="media-badge">{{ 'GIF' if item.media_type == 'animated_gif' else '视频' }}</span>
+                {% if item.duration_ms %}<span class="media-duration">{{ (item.duration_ms // 1000) // 60 }}:{{ '%02d' % ((item.duration_ms // 1000) % 60) }}</span>{% endif %}
+            </button>
+            {% else %}
+            <button class="media-cell {% if blur_media %}sensitive-cover{% endif %}" type="button"
+                    data-full="{{ full_url }}"
+                    data-author="{{ post.display_name or '' }}"
+                    data-time="{{ post.time_str }}"
+                    data-tweet="{{ post.x_url }}"
+                    title="查看大图">
+                <img src="{{ url_for('thumb', media_id=item.id, w=900) if media_count == 1 else url_for('thumb', media_id=item.id) }}"
+                     {% if item.width and item.height %}width="{{ item.width }}" height="{{ item.height }}"{% endif %}
+                     alt="{{ post.display_name or '' }} 媒体 {{ loop.index }}"
+                     loading="lazy" decoding="async">
+                {% if item.media_type == 'animated_gif' %}<span class="media-badge">GIF</span>{% endif %}
+            </button>
+            {% endif %}
+            {% else %}
+            <div class="media-cell is-missing" title="{{ item.status_label }}"><span>{{ item.status_label }}</span></div>
+            {% endif %}
+        {% endfor %}
+    </div>
+    {% elif post.media_count == 0 %}
+    <div class="no-image-note">这条推文没有媒体，仅保留文字内容。</div>
+    {% endif %}
+
+    <footer class="post-foot">
+        <span class="foot-stat">
+            {{ post.favorite_count }} 喜欢 · {{ post.retweet_count }} 转推 · {{ post.reply_count }} 回复{% if post.view_count %} · {{ post.view_count }} 浏览{% endif %}
+        </span>
+        <a href="{{ post.x_url }}" target="_blank" rel="noopener">在 X 查看</a>
+    </footer>
+</article>

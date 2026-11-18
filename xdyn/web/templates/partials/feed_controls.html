@@ -1,0 +1,15 @@
+<div class="feed-controls">
+    <div class="view-tabs">
+        <a class="{% if mode == 'dynamic' %}active{% endif %}" href="{{ feed_url(mode='dynamic') }}">动态</a>
+        <a class="{% if mode == 'images' %}active{% endif %}" href="{{ feed_url(mode='images') }}">媒体</a>
+    </div>
+    <div class="control-group">
+        <a class="{% if sort == 'desc' %}active{% endif %}" href="{{ feed_url(sort='desc') }}">最新</a>
+        <a class="{% if sort == 'asc' %}active{% endif %}" href="{{ feed_url(sort='asc') }}">最早</a>
+    </div>
+    <div class="control-group">
+        <a class="{% if load_mode == 'infinite' %}active{% endif %}" href="{{ feed_url(load='infinite') }}">无限滚动</a>
+        <a class="{% if load_mode == 'pages' %}active{% endif %}" href="{{ feed_url(load='pages') }}">分页</a>
+    </div>
+    <span class="feed-count">{{ total }} 条</span>
+</div>

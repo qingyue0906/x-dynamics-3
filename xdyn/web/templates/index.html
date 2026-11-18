@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-head">
+    <div>
+        <h1>{{ page_title }}</h1>
+        <p class="sub">
+            {{ stats.posts }} 条推文，{{ stats.ok_media }} 个本地媒体；
+            当前模式：{{ '媒体相册' if mode == 'images' else '动态' }}
+        </p>
+    </div>
+</section>
+
+{% include "partials/feed_controls.html" %}
+
+<div id="feed"
+     data-mode="{{ mode }}"
+     data-load="{{ load_mode }}"
+     data-next-offset="{{ next_offset }}"
+     data-sort="{{ sort }}"
+     data-query="{{ query or '' }}"
+     {% if current_user_id %}data-user-id="{{ current_user_id }}"{% endif %}>
+    {% if mode == 'images' %}
+    <div class="album-grid" id="postList" data-lightbox-group>
+        {% include "partials/album_list.html" %}
+    </div>
+    {% else %}
+    <div class="post-list" id="postList">
+        {% include "partials/post_list.html" %}
+    </div>
+    {% endif %}
+
+    <div class="empty" id="feedEmpty" {% if total %}hidden{% endif %}>还没有归档内容。先去“用户”页添加一个 X 用户并同步。</div>
+    <div class="feed-more" id="feedMore" {% if not has_more %}hidden{% endif %}>
+        <button class="btn-ghost" type="button" id="loadMore">加载更多</button>
+    </div>
+    <div id="feedSentinel" class="feed-sentinel"></div>
+
+    {% if load_mode == 'pages' %}
+    {% include "partials/pagination.html" %}
+    {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-head">
+    <div>
+        <h1>用户</h1>
+        <p class="sub">共 {{ stats.users }} 个用户，{{ stats.enabled_users }} 个启用同步；{{ stats.collections }} 个导入集合；头像 {{ stats.avatars }} 个</p>
+    </div>
+    <div class="page-actions">
+        <button class="btn-ghost" type="button" id="refreshAvatars">刷新头像</button>
+        <button class="btn-primary" type="button" id="syncAll">同步全部启用用户</button>
+    </div>
+</section>
+
+<section class="panel" id="usersPage">
+    <div class="panel-head">
+        <div>
+            <h2>添加用户</h2>
+            <p class="sub">输入 @用户名、x.com/用户名、x.com/.../status/... 或数字 ID</p>
+        </div>
+        <form class="inline-form" id="addUserForm">
+            <input type="text" class="input" id="addUserInput" placeholder="例如 @XDevelopers 或 https://x.com/XDevelopers" autocomplete="off">
+            <button class="btn-primary" type="submit">添加</button>
+        </form>
+    </div>
+</section>
+
+<section class="panel">
+    <div class="toolbar wrap">
+        <label class="check"><input type="checkbox" id="selectAllUsers"> 全选</label>
+        <span class="toolbar-sep"></span>
+        <button class="btn-ghost" type="button" id="syncSelected">同步选中</button>
+        <button class="btn-ghost" type="button" id="retrySelected">重试选中</button>
+        <button class="btn-ghost" type="button" id="retryAll">重试全部</button>
+        <label class="check"><input type="checkbox" id="fullSync"> 全量历史</label>
+        <span class="toolbar-hint">可重试：缺失 {{ retry_counts.get('missing', 0) }} / 失败 {{ retry_counts.get('failed', 0) }} / 待下载 {{ retry_counts.get('pending', 0) }} / 受限 {{ retry_counts.get('restricted', 0) }}</span>
+    </div>
+
+    <div class="user-table">
+        <div class="user-row user-head">
+            <span></span>
+            <span>用户</span>
+            <span>数据</span>
+            <span>同步模式</span>
+            <span>操作</span>
+        </div>
+        {% for u in user_rows if u.kind == 'user' %}
+        <div class="user-row {% if not u.enabled %}is-disabled{% endif %}" data-user-id="{{ u.id }}">
+            <span><input type="checkbox" class="user-check" value="{{ u.id }}"></span>
+            <div class="user-cell">
+                <span class="avatar" style="--hue: {{ u.id % 360 }}">
+                    <img src="{{ url_for('avatar', user_id=u.id, v=u.avatar_updated_at or 0) }}" alt="">
+                </span>
+                <div class="user-name-box">
+                    <a class="user-name" href="{{ url_for('user_page', user_id=u.id) }}">{{ u.name }}</a>
+                    <span class="user-uid">{% if u.screen_name %}@{{ u.screen_name }}{% endif %}{% if u.rest_id %} · {{ u.rest_id }}{% endif %}</span>
+                </div>
+            </div>
+            <div class="user-data">
+                <span>{{ u.post_count }} 条</span>
+                <span class="muted">{{ u.ok_media_count }} 媒体</span>
+                {% if u.last_sync_at %}<span class="muted">上次 {{ u.last_sync_at|timestamp_time }}</span>{% endif %}
+            </div>
+            <div>
+                <select class="mode-select" data-mode="{{ u.id }}">
+                    <option value="media" {% if u.sync_mode == 'media' %}selected{% endif %}>仅媒体</option>
+                    <option value="timeline" {% if u.sync_mode == 'timeline' %}selected{% endif %}>全部推文</option>
+                    <option value="replies" {% if u.sync_mode == 'replies' %}selected{% endif %}>全部+回复</option>
+                    <option value="none" {% if u.sync_mode == 'none' %}selected{% endif %}>不同步</option>
+                </select>
+                <button class="toggle {% if u.enabled %}on{% endif %}" type="button" data-toggle="{{ u.id }}" data-enabled="{{ 1 if u.enabled else 0 }}">
+                    <span class="toggle-knob"></span>
+                    <span class="toggle-label">{{ '已启用' if u.enabled else '已停用' }}</span>
+                </button>
+            </div>
+            <div class="user-actions">
+                <button class="btn-mini" type="button" data-sync="{{ u.id }}">同步</button>
+                <button class="btn-mini" type="button" data-retry="{{ u.id }}">重试</button>
+                <a class="btn-mini ghost" href="{{ url_for('user_page', user_id=u.id) }}">画廊</a>
+            </div>
+        </div>
+        {% else %}
+        <div class="empty">还没有用户，先在上面添加一个 X 用户。</div>
+        {% endfor %}
+    </div>
+</section>
+
+{% set collections = user_rows|rejectattr('kind', 'equalto', 'user')|list %}
+{% if collections %}
+<section class="panel">
+    <div class="panel-head">
+        <div>
+            <h2>导入集合</h2>
+            <p class="sub">来自 twitter_download 的标签/评论区归档，不参与自动同步。</p>
+        </div>
+    </div>
+    <div class="user-table">
+        {% for u in collections %}
+        <div class="user-row" data-user-id="{{ u.id }}">
+            <span></span>
+            <div class="user-cell">
+                <span class="avatar" style="--hue: {{ u.id % 360 }}"><span class="avatar-all">{{ '#' if u.kind == 'tag' else '回' }}</span></span>
+                <div class="user-name-box">
+                    <a class="user-name" href="{{ url_for('user_page', user_id=u.id) }}">{{ u.name }}</a>
+                    <span class="user-uid">{{ u.kind }}</span>
+                </div>
+            </div>
+            <div class="user-data">
+                <span>{{ u.post_count }} 条</span>
+                <span class="muted">{{ u.ok_media_count }} 媒体</span>
+            </div>
+            <div><span class="badge-soft">只读集合</span></div>
+            <div class="user-actions"><a class="btn-mini ghost" href="{{ url_for('user_page', user_id=u.id) }}">画廊</a></div>
+        </div>
+        {% endfor %}
+    </div>
+</section>
+{% endif %}
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/users.js') }}" defer></script>{% endblock %}
