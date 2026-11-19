@@ -26,8 +26,55 @@ class Database:
         self.conn.execute("PRAGMA synchronous=NORMAL")
         self.conn.execute("PRAGMA foreign_keys=ON")
         self.conn.execute("PRAGMA busy_timeout=5000")
+        self.fts_enabled = self._has_fts()
         if init:
             self.init_schema()
+
+    def _has_fts(self) -> bool:
+        return bool(
+            self.conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='posts_fts'"
+            ).fetchone()
+        )
+
+    def _init_fts(self) -> None:
+        existed = self._has_fts()
+        try:
+            self.conn.execute(
+                """
+                CREATE VIRTUAL TABLE IF NOT EXISTS posts_fts USING fts5(
+                    search_text,
+                    content='posts',
+                    content_rowid='id',
+                    tokenize='trigram'
+                )
+                """
+            )
+            self.conn.executescript(
+                """
+                CREATE TRIGGER IF NOT EXISTS posts_fts_ai AFTER INSERT ON posts BEGIN
+                    INSERT INTO posts_fts(rowid, search_text) VALUES (new.id, new.search_text);
+                END;
+                CREATE TRIGGER IF NOT EXISTS posts_fts_ad AFTER DELETE ON posts BEGIN
+                    INSERT INTO posts_fts(posts_fts, rowid, search_text) VALUES ('delete', old.id, old.search_text);
+                END;
+                CREATE TRIGGER IF NOT EXISTS posts_fts_au AFTER UPDATE OF search_text ON posts BEGIN
+                    INSERT INTO posts_fts(posts_fts, rowid, search_text) VALUES ('delete', old.id, old.search_text);
+                    INSERT INTO posts_fts(rowid, search_text) VALUES (new.id, new.search_text);
+                END;
+                """
+            )
+            if not existed:
+                self.conn.execute("INSERT INTO posts_fts(posts_fts) VALUES('rebuild')")
+            else:
+                indexed = int(self.conn.execute("SELECT COUNT(*) FROM posts_fts").fetchone()[0])
+                total = int(self.conn.execute("SELECT COUNT(*) FROM posts").fetchone()[0])
+                if indexed != total:
+                    self.conn.execute("INSERT INTO posts_fts(posts_fts) VALUES('rebuild')")
+            self.fts_enabled = True
+        except sqlite3.OperationalError as exc:
+            logger.warning("FTS5 不可用，搜索回退到 LIKE：%s", exc)
+            self.fts_enabled = False
 
     def init_schema(self) -> None:
         has_users = bool(
@@ -41,6 +88,7 @@ class Database:
         schema = (Path(__file__).with_name("schema.sql")).read_text(encoding="utf-8")
         self.conn.executescript(schema)
         self.conn.execute("PRAGMA user_version = 1")
+        self._init_fts()
 
     def _backup_before_upgrade(self, version: int) -> None:
         backup_dir = self.path.parent / "backups"
@@ -110,8 +158,6 @@ class Database:
         avatar_url: str = "",
         banner_url: str = "",
         image_dir: str = "",
-        sync_mode: str = "media",
-        include_retweets: bool = False,
         enabled: bool | None = None,
         protected: bool = False,
         verified: bool = False,
@@ -137,16 +183,16 @@ class Database:
                 """
                 INSERT INTO users(
                     rest_id, screen_name, name, kind, bio, location, url,
-                    avatar_url, banner_url, image_dir, sync_mode, include_retweets,
+                    avatar_url, banner_url, image_dir,
                     enabled, protected, verified, followers_count, following_count,
                     tweet_count, media_count, source_path, sort_order,
                     created_at, updated_at
-                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     rest_id, screen_name, name or screen_name or rest_id or "archive", kind,
-                    bio, location, url, avatar_url, banner_url, image_dir, sync_mode,
-                    1 if include_retweets else 0, 1 if (enabled is None or enabled) else 0,
+                    bio, location, url, avatar_url, banner_url, image_dir,
+                    1 if (enabled is None or enabled) else 0,
                     1 if protected else 0, 1 if verified else 0, int(followers_count),
                     int(following_count), int(tweet_count), int(media_count), source_path,
                     int(sort_order), now, now,
@@ -169,8 +215,6 @@ class Database:
                 avatar_url = CASE WHEN ? <> '' THEN ? ELSE avatar_url END,
                 banner_url = CASE WHEN ? <> '' THEN ? ELSE banner_url END,
                 image_dir = CASE WHEN ? <> '' THEN ? ELSE image_dir END,
-                sync_mode = CASE WHEN ? <> '' THEN ? ELSE sync_mode END,
-                include_retweets = ?,
                 enabled = ?,
                 protected = ?,
                 verified = ?,
@@ -186,8 +230,7 @@ class Database:
             (
                 rest_id, rest_id, screen_name, screen_name, name, name, kind, kind,
                 bio, bio, location, location, url, url, avatar_url, avatar_url,
-                banner_url, banner_url, image_dir, image_dir, sync_mode, sync_mode,
-                1 if include_retweets else int(row["include_retweets"]),
+                banner_url, banner_url, image_dir, image_dir,
                 enabled_value, 1 if protected else int(row["protected"]),
                 1 if verified else int(row["verified"]),
                 int(followers_count), int(followers_count),
@@ -203,20 +246,6 @@ class Database:
             "UPDATE users SET enabled = ?, updated_at = ? WHERE id = ?",
             (1 if enabled else 0, int(time.time()), int(user_id)),
         )
-
-    def set_user_mode(self, user_id: int, mode: str, include_retweets: bool | None = None) -> None:
-        if mode not in ("media", "timeline", "replies", "none"):
-            mode = "media"
-        if include_retweets is None:
-            self.conn.execute(
-                "UPDATE users SET sync_mode = ?, updated_at = ? WHERE id = ?",
-                (mode, int(time.time()), int(user_id)),
-            )
-        else:
-            self.conn.execute(
-                "UPDATE users SET sync_mode = ?, include_retweets = ?, updated_at = ? WHERE id = ?",
-                (mode, 1 if include_retweets else 0, int(time.time()), int(user_id)),
-            )
 
     def set_user_image_dir(self, user_id: int, image_dir: str) -> None:
         self.conn.execute(
@@ -300,15 +329,27 @@ class Database:
     def list_users_with_counts(self):
         return self.conn.execute(
             """
+            WITH post_stats AS (
+                SELECT user_id,
+                       COUNT(*) AS post_count,
+                       COALESCE(SUM(CASE WHEN media_count > 0 THEN 1 ELSE 0 END), 0) AS media_post_count,
+                       COALESCE(SUM(media_count), 0) AS media_ref_count
+                FROM posts GROUP BY user_id
+            ),
+            media_stats AS (
+                SELECT p.user_id, COUNT(*) AS ok_media_count
+                FROM media m JOIN posts p ON p.id = m.post_id
+                WHERE m.status = 'ok'
+                GROUP BY p.user_id
+            )
             SELECT u.*,
-                   COUNT(p.id) AS post_count,
-                   COALESCE(SUM(CASE WHEN p.media_count > 0 THEN 1 ELSE 0 END), 0) AS media_post_count,
-                   COALESCE(SUM(p.media_count), 0) AS media_ref_count,
-                   (SELECT COUNT(*) FROM media m JOIN posts p2 ON p2.id = m.post_id
-                    WHERE p2.user_id = u.id AND m.status = 'ok') AS ok_media_count
+                   COALESCE(ps.post_count, 0) AS post_count,
+                   COALESCE(ps.media_post_count, 0) AS media_post_count,
+                   COALESCE(ps.media_ref_count, 0) AS media_ref_count,
+                   COALESCE(ms.ok_media_count, 0) AS ok_media_count
             FROM users u
-            LEFT JOIN posts p ON p.user_id = u.id
-            GROUP BY u.id
+            LEFT JOIN post_stats ps ON ps.user_id = u.id
+            LEFT JOIN media_stats ms ON ms.user_id = u.id
             ORDER BY CASE u.kind WHEN 'user' THEN 0 ELSE 1 END, u.sort_order, u.name COLLATE NOCASE, u.id
             """
         ).fetchall()
@@ -316,25 +357,37 @@ class Database:
     def get_user_with_counts(self, user_id: int):
         return self.conn.execute(
             """
+            WITH post_stats AS (
+                SELECT user_id,
+                       COUNT(*) AS post_count,
+                       COALESCE(SUM(CASE WHEN media_count > 0 THEN 1 ELSE 0 END), 0) AS media_post_count,
+                       COALESCE(SUM(media_count), 0) AS media_ref_count
+                FROM posts WHERE user_id = ? GROUP BY user_id
+            ),
+            media_stats AS (
+                SELECT p.user_id, COUNT(*) AS ok_media_count
+                FROM media m JOIN posts p ON p.id = m.post_id
+                WHERE p.user_id = ? AND m.status = 'ok'
+                GROUP BY p.user_id
+            )
             SELECT u.*,
-                   COUNT(p.id) AS post_count,
-                   COALESCE(SUM(CASE WHEN p.media_count > 0 THEN 1 ELSE 0 END), 0) AS media_post_count,
-                   COALESCE(SUM(p.media_count), 0) AS media_ref_count,
-                   (SELECT COUNT(*) FROM media m JOIN posts p2 ON p2.id = m.post_id
-                    WHERE p2.user_id = u.id AND m.status = 'ok') AS ok_media_count
+                   COALESCE(ps.post_count, 0) AS post_count,
+                   COALESCE(ps.media_post_count, 0) AS media_post_count,
+                   COALESCE(ps.media_ref_count, 0) AS media_ref_count,
+                   COALESCE(ms.ok_media_count, 0) AS ok_media_count
             FROM users u
-            LEFT JOIN posts p ON p.user_id = u.id
+            LEFT JOIN post_stats ps ON ps.user_id = u.id
+            LEFT JOIN media_stats ms ON ms.user_id = u.id
             WHERE u.id = ?
-            GROUP BY u.id
             """,
-            (int(user_id),),
+            (int(user_id), int(user_id), int(user_id)),
         ).fetchone()
 
     def list_sync_users(self):
         return self.conn.execute(
             """
             SELECT * FROM users
-            WHERE enabled = 1 AND kind = 'user' AND sync_mode <> 'none'
+            WHERE enabled = 1 AND kind = 'user'
             ORDER BY sort_order, name COLLATE NOCASE, id
             """
         ).fetchall()
@@ -521,8 +574,7 @@ class Database:
             (int(post_id), int(post_id), int(post_id)),
         )
 
-    @staticmethod
-    def _post_where(user_id=None, q=None, include_empty=False, kind=None):
+    def _post_where(self, user_id=None, q=None, include_empty=False, kind=None):
         where = ["1=1"] if include_empty else ["p.media_count > 0"]
         params: list = []
         if user_id:
@@ -531,9 +583,14 @@ class Database:
         if kind:
             where.append("p.kind = ?")
             params.append(kind)
-        if q:
-            where.append("p.search_text LIKE ?")
-            params.append(f"%{q.strip().lower()}%")
+        term = (q or "").strip()
+        if term:
+            if self.fts_enabled and len(term) >= 3:
+                where.append("p.id IN (SELECT rowid FROM posts_fts WHERE posts_fts MATCH ?)")
+                params.append('"' + term.replace('"', '""') + '"')
+            else:
+                where.append("p.search_text LIKE ?")
+                params.append(f"%{term.lower()}%")
         return " AND ".join(where), params
 
     @staticmethod
@@ -593,8 +650,22 @@ class Database:
             item["media"] = media_by_post.get(int(row["id"]), [])
             item["time_str"] = format_ts(item.get("published_at"))
             item["x_url"] = item.get("url") or f"https://x.com/i/status/{item['tweet_id']}"
-            item["display_name"] = item.get("author_name") or item.get("owner_name") or item.get("author_screen_name")
-            item["display_screen"] = item.get("author_screen_name") or item.get("owner_screen_name")
+            if item.get("is_retweet"):
+                item["display_name"] = (
+                    item.get("owner_name") or item.get("author_name")
+                    or item.get("owner_screen_name") or item.get("author_screen_name")
+                )
+                item["display_screen"] = (
+                    item.get("owner_screen_name") or item.get("author_screen_name")
+                )
+            else:
+                item["display_name"] = (
+                    item.get("author_name") or item.get("owner_name")
+                    or item.get("author_screen_name")
+                )
+                item["display_screen"] = (
+                    item.get("author_screen_name") or item.get("owner_screen_name")
+                )
             name = item.get("display_name") or ""
             item["initial"] = name[:1] if name else "?"
             item["ok_media"] = sum(1 for media in item["media"] if media.get("ok"))
@@ -613,16 +684,20 @@ class Database:
         ).fetchone()
         return int(row["n"])
 
-    @staticmethod
-    def _media_where(user_id=None, q=None, include_missing=False):
+    def _media_where(self, user_id=None, q=None, include_missing=False):
         where = ["1=1"] if include_missing else ["m.status = 'ok'"]
         params: list = []
         if user_id:
             where.append("p.user_id = ?")
             params.append(int(user_id))
-        if q:
-            where.append("p.search_text LIKE ?")
-            params.append(f"%{q.strip().lower()}%")
+        term = (q or "").strip()
+        if term:
+            if self.fts_enabled and len(term) >= 3:
+                where.append("p.id IN (SELECT rowid FROM posts_fts WHERE posts_fts MATCH ?)")
+                params.append('"' + term.replace('"', '""') + '"')
+            else:
+                where.append("p.search_text LIKE ?")
+                params.append(f"%{term.lower()}%")
         return " AND ".join(where), params
 
     def list_media_with_posts(
@@ -881,27 +956,40 @@ class Database:
     # ---------------- stats / runs ----------------
 
     def stats(self) -> dict:
-        row = self.conn.execute(
+        users = self.conn.execute(
             """
             SELECT
-                (SELECT COUNT(*) FROM users WHERE kind = 'user') AS users,
-                (SELECT COUNT(*) FROM users WHERE kind = 'user' AND enabled = 1) AS enabled_users,
-                (SELECT COUNT(*) FROM users WHERE kind <> 'user') AS collections,
-                (SELECT COUNT(*) FROM users WHERE avatar_file <> '') AS avatars,
-                (SELECT COUNT(*) FROM posts) AS posts,
-                (SELECT COUNT(*) FROM posts WHERE media_count > 0) AS media_posts,
-                (SELECT COUNT(*) FROM posts WHERE media_count = 0) AS empty_posts,
-                (SELECT COUNT(*) FROM media) AS media,
-                (SELECT COUNT(*) FROM media WHERE status = 'ok') AS ok_media,
-                (SELECT COUNT(*) FROM media WHERE status IN ('missing', 'failed')) AS missing_media,
-                (SELECT COUNT(*) FROM media WHERE status = 'dead') AS dead_media,
-                (SELECT COUNT(*) FROM media WHERE status = 'restricted') AS restricted_media,
-                (SELECT COUNT(*) FROM media WHERE status = 'pending') AS pending_media,
-                (SELECT COUNT(*) FROM media WHERE status IN ('missing', 'failed', 'dead', 'restricted', 'pending')) AS placeholder_media,
-                (SELECT COALESCE(SUM(local_size), 0) FROM media) AS bytes
+                COALESCE(SUM(CASE WHEN kind = 'user' THEN 1 ELSE 0 END), 0) AS users,
+                COALESCE(SUM(CASE WHEN kind = 'user' AND enabled = 1 THEN 1 ELSE 0 END), 0) AS enabled_users,
+                COALESCE(SUM(CASE WHEN kind <> 'user' THEN 1 ELSE 0 END), 0) AS collections,
+                COALESCE(SUM(CASE WHEN avatar_file <> '' THEN 1 ELSE 0 END), 0) AS avatars
+            FROM users
             """
         ).fetchone()
-        return dict(row)
+        posts = self.conn.execute(
+            """
+            SELECT
+                COUNT(*) AS posts,
+                COALESCE(SUM(CASE WHEN media_count > 0 THEN 1 ELSE 0 END), 0) AS media_posts,
+                COALESCE(SUM(CASE WHEN media_count = 0 THEN 1 ELSE 0 END), 0) AS empty_posts
+            FROM posts
+            """
+        ).fetchone()
+        media = self.conn.execute(
+            """
+            SELECT
+                COUNT(*) AS media,
+                COALESCE(SUM(CASE WHEN status = 'ok' THEN 1 ELSE 0 END), 0) AS ok_media,
+                COALESCE(SUM(CASE WHEN status IN ('missing', 'failed') THEN 1 ELSE 0 END), 0) AS missing_media,
+                COALESCE(SUM(CASE WHEN status = 'dead' THEN 1 ELSE 0 END), 0) AS dead_media,
+                COALESCE(SUM(CASE WHEN status = 'restricted' THEN 1 ELSE 0 END), 0) AS restricted_media,
+                COALESCE(SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), 0) AS pending_media,
+                COALESCE(SUM(CASE WHEN status IN ('missing', 'failed', 'dead', 'restricted', 'pending') THEN 1 ELSE 0 END), 0) AS placeholder_media,
+                COALESCE(SUM(local_size), 0) AS bytes
+            FROM media
+            """
+        ).fetchone()
+        return {**dict(users), **dict(posts), **dict(media)}
 
     def start_sync_run(self, user_id: int) -> int:
         row = self.conn.execute(

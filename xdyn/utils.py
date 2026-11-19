@@ -215,10 +215,33 @@ def extension_for_content_type(content_type: str) -> str:
         "image/png": ".png",
         "image/webp": ".webp",
         "image/gif": ".gif",
+        "image/avif": ".avif",
+        "image/heic": ".heic",
         "video/mp4": ".mp4",
         "video/webm": ".webm",
         "video/quicktime": ".mov",
     }.get(value, "")
+
+
+def detect_media_kind(head: bytes) -> str:
+    """Return "image", "video" or "" from the first bytes of a media file."""
+    head = bytes(head or b"")
+    if head.startswith(b"\xff\xd8\xff"):
+        return "image"
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image"
+    if head.startswith((b"GIF87a", b"GIF89a")):
+        return "image"
+    if len(head) >= 12 and head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "image"
+    if len(head) >= 12 and head[4:8] == b"ftyp":
+        brand = head[8:12]
+        if brand in (b"avif", b"avis", b"heic", b"heix", b"mif1", b"msf1"):
+            return "image"
+        return "video"
+    if head.startswith(b"\x1aE\xdf\xa3"):
+        return "video"
+    return ""
 
 
 def is_within(base: Path, target: Path) -> bool:

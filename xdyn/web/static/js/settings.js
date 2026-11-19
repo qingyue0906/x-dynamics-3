@@ -62,8 +62,6 @@
             image_format: data.get('image_format'),
             proxy: data.get('proxy'),
             api_backend: data.get('api_backend'),
-            include_retweets: data.get('include_retweets') === 'on',
-            download_quoted_media: data.get('download_quoted_media') === 'on',
             export_json: data.get('export_json') === 'on'
         };
         try {

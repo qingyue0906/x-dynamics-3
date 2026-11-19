@@ -11,14 +11,4 @@
             }
         });
     });
-    document.querySelectorAll('[data-mode-user]').forEach((select) => {
-        select.addEventListener('change', async () => {
-            try {
-                await api(`/api/users/${Number(select.dataset.modeUser)}/mode`, { mode: select.value });
-                toast('同步模式已更新', 'ok');
-            } catch (error) {
-                toast(error.message, 'error');
-            }
-        });
-    });
 })();

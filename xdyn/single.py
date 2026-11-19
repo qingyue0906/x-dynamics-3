@@ -108,7 +108,6 @@ async def download_tweet(
     user = ensure_user(db, config, author)
     if existing is None:
         db.set_user_enabled(int(user["id"]), bool(add_user))
-        db.set_user_mode(int(user["id"]), "timeline")
     elif add_user and not user["enabled"]:
         db.set_user_enabled(int(user["id"]), True)
     if author["avatar_url"]:

@@ -1,23 +1,26 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import html
 import logging
 import os
 import threading
 import warnings
+from io import BytesIO
 from pathlib import Path
 
+import httpx
 from flask import Flask, abort, g, jsonify, render_template, request, send_file, url_for
 from PIL import Image, ImageOps
 
 from ..config import Config, load_config
 from ..db import Database
+from ..http import DEFAULT_UA
 from ..jobs import run_avatars, run_retry, run_sync, run_tweet, run_verify
 from ..single import preview_tweet
 from ..sync import resolve_user
 from ..tasks import TaskManager, read_log_tail
-from ..userdata import prepare_runtime
 from ..utils import format_ts, human_size, resolve_media_path
 from ..xclient import XClient
 
@@ -48,6 +51,42 @@ def _lock_for(media_id: int) -> threading.Lock:
         return _thumb_locks[media_id]
 
 
+def _fetch_remote_image(config: Config, url: str) -> bytes:
+    headers = {"User-Agent": DEFAULT_UA, "Referer": "https://x.com/"}
+    timeout = httpx.Timeout(20.0, connect=10.0)
+    with httpx.Client(
+        proxy=config.sync.proxy or None,
+        follow_redirects=True,
+        timeout=timeout,
+        headers=headers,
+    ) as client:
+        response = client.get(url)
+        if response.status_code != 200:
+            raise RuntimeError(f"HTTP {response.status_code}")
+        return response.content
+
+
+def _video_thumb(config: Config, row, media_id: int, width: int):
+    poster_url = str(row["poster_url"] or "")
+    if not poster_url:
+        return _placeholder(video=True)
+    digest = hashlib.sha1(poster_url.encode("utf-8")).hexdigest()[:8]
+    cache_path = config.thumbnails_dir / f"{media_id}_poster_{digest}_{width}.webp"
+    if cache_path.is_file() and cache_path.stat().st_size > 0:
+        return send_file(cache_path, mimetype="image/webp", conditional=True, max_age=31536000)
+    lock = _lock_for(media_id)
+    with lock:
+        if cache_path.is_file() and cache_path.stat().st_size > 0:
+            return send_file(cache_path, mimetype="image/webp", conditional=True, max_age=31536000)
+        try:
+            payload = _fetch_remote_image(config, poster_url)
+            _make_thumbnail(BytesIO(payload), cache_path, width)
+        except Exception as exc:
+            logger.warning("生成视频封面失败 media=%s：%s", media_id, exc)
+            return _placeholder(video=True)
+    return send_file(cache_path, mimetype="image/webp", conditional=True, max_age=31536000)
+
+
 class AppState:
     def __init__(self, config: Config) -> None:
         self.config = config
@@ -60,7 +99,6 @@ class AppState:
 
 
 def create_app(config: Config) -> Flask:
-    prepare_runtime(config)
     state = AppState(config)
     package_dir = Path(__file__).resolve().parent
     app = Flask(
@@ -293,19 +331,19 @@ def create_app(config: Config) -> Flask:
         row = get_db().get_media_with_user_by_id(media_id)
         if not row:
             return _placeholder()
+        try:
+            width = int(request.args.get("w", str(state.config.web.thumbnail_width)))
+        except ValueError:
+            width = state.config.web.thumbnail_width
+        width = max(160, min(1200, width))
         if row["media_type"] in ("video", "animated_gif"):
-            return _placeholder(video=True)
+            return _video_thumb(state.config, row, media_id, width)
         try:
             source = resolve_media_path(state.config.data_dir, row["image_dir"], row["file_name"])
         except ValueError:
             return _placeholder()
         if not source.is_file() or source.stat().st_size <= 0:
             return _placeholder()
-        try:
-            width = int(request.args.get("w", str(state.config.web.thumbnail_width)))
-        except ValueError:
-            width = state.config.web.thumbnail_width
-        width = max(160, min(1200, width))
         try:
             mtime = int(source.stat().st_mtime)
         except OSError:
@@ -413,20 +451,6 @@ def create_app(config: Config) -> Flask:
         enabled = bool(payload.get("enabled"))
         db.set_user_enabled(user_id, enabled)
         return jsonify(ok=True, user_id=user_id, enabled=enabled)
-
-    @app.post("/api/users/<int:user_id>/mode")
-    def api_user_mode(user_id: int):
-        payload = request.get_json(silent=True) or {}
-        db = get_db()
-        user = db.get_user(user_id)
-        if not user:
-            return jsonify(ok=False, error="用户不存在"), 404
-        mode = str(payload.get("mode") or "media")
-        if mode not in ("media", "timeline", "replies", "none"):
-            return jsonify(ok=False, error="无效模式"), 400
-        include_retweets = payload.get("include_retweets")
-        db.set_user_mode(user_id, mode, None if include_retweets is None else bool(include_retweets))
-        return jsonify(ok=True)
 
     # ---------------- job helpers ----------------
 

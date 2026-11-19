@@ -239,6 +239,7 @@ class XClient:
 
     def _raise_for_errors(self, errors: list, operation: str) -> None:
         messages = []
+        stale = False
         for item in errors:
             if not isinstance(item, dict):
                 continue
@@ -249,6 +250,10 @@ class XClient:
                 raise XAuthError(f"{operation} 鉴权失败：{code} {message}")
             if code in RATE_CODES or "Rate limit" in message:
                 raise XRateLimitError(f"{operation} 限流：{code} {message}")
+            if re.search(r"(?:query|operation).*(?:not found|unknown|invalid|expired)", message, re.I):
+                stale = True
+        if stale:
+            raise XStaleError(f"{operation} 返回疑似失效的 query/operation：{' | '.join(messages)[:400]}")
         raise XApiError(f"{operation} 返回错误：{' | '.join(messages)[:400]}")
 
     async def _wait_for_reset(self, response: httpx.Response, operation: str) -> None:
@@ -295,36 +300,21 @@ class XClient:
             raise XApiError(f"找不到用户 ID {rest_id}")
         return user
 
-    async def fetch_page(self, rest_id: str, mode: str, cursor: str = "", count: int | None = None) -> dict:
+    async def fetch_page(self, rest_id: str, cursor: str = "", count: int | None = None) -> dict:
         count = int(count or self.config.sync.page_size)
         variables: dict[str, Any] = {
             "userId": str(rest_id),
             "count": count,
-            "includePromotedContent": mode == "replies",
+            "includePromotedContent": False,
+            "withClientEventToken": False,
+            "withBirdwatchNotes": False,
             "withVoice": True,
             "withV2Timeline": True,
         }
-        if mode == "media":
-            variables.update({
-                "withClientEventToken": False,
-                "withBirdwatchNotes": False,
-            })
-            operation = "UserMedia"
-        elif mode == "replies":
-            variables.update({
-                "withCommunity": True,
-                "withQuickPromoteEligibilityTweetFields": True,
-            })
-            operation = "UserTweetsAndReplies"
-        else:
-            variables.update({
-                "withQuickPromoteEligibilityTweetFields": True,
-            })
-            operation = "UserTweets"
         if cursor:
             variables["cursor"] = cursor
         return await self.graphql(
-            operation,
+            "UserMedia",
             variables,
             features=GQL_FEATURES,
             field_toggles=FIELD_TOGGLES["timeline"],

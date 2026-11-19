@@ -26,8 +26,6 @@ DEFAULT_SYNC = {
     "max_media": 0,
     "max_empty_pages": 3,
     "page_size": 40,
-    "include_retweets": False,
-    "download_quoted_media": False,
     "image_format": "orig",
     "proxy": "",
     "api_backend": "httpx",
@@ -81,8 +79,6 @@ def _clean_sync(raw: dict) -> dict:
         "max_media": _clamp(data.get("max_media"), 0, 1000000, int, 0),
         "max_empty_pages": _clamp(data.get("max_empty_pages"), 1, 20, int, 3),
         "page_size": _clamp(data.get("page_size"), 10, 100, int, 40),
-        "include_retweets": bool(data.get("include_retweets", False)),
-        "download_quoted_media": bool(data.get("download_quoted_media", False)),
         "image_format": str(data.get("image_format") or "orig")
         if str(data.get("image_format") or "orig") in ("orig", "jpg", "png")
         else "orig",

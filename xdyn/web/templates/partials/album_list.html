@@ -3,17 +3,13 @@
     {% if item.ok %}
     <button class="media-cell" type="button"
             data-full="{{ url_for('media', media_id=item.id) }}"
-            {% if item.is_video %}data-video="1" data-poster="{{ item.poster_url or '' }}"{% endif %}
+            {% if item.is_video %}data-video="1" data-poster="{{ url_for('thumb', media_id=item.id, w=900) if item.poster_url else '' }}"{% endif %}
             data-author="{{ item.display_name or '' }}"
             data-time="{{ item.time_str }}"
             data-tweet="{{ item.x_url }}"
             title="{{ '播放视频' if item.is_video else '查看大图' }}">
         {% if item.is_video %}
-            {% if item.poster_url %}
-            <img class="video-poster" src="{{ item.poster_url }}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer">
-            {% else %}
             <img class="video-poster" src="{{ url_for('thumb', media_id=item.id) }}" alt="" loading="lazy" decoding="async">
-            {% endif %}
             <span class="media-badge">{{ 'GIF' if item.media_type == 'animated_gif' else '视频' }}</span>
         {% else %}
             <img src="{{ url_for('thumb', media_id=item.id) }}" alt="" loading="lazy" decoding="async">

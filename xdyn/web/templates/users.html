@@ -40,7 +40,7 @@
             <span></span>
             <span>用户</span>
             <span>数据</span>
-            <span>同步模式</span>
+            <span>启用</span>
             <span>操作</span>
         </div>
         {% for u in user_rows if u.kind == 'user' %}
@@ -61,12 +61,6 @@
                 {% if u.last_sync_at %}<span class="muted">上次 {{ u.last_sync_at|timestamp_time }}</span>{% endif %}
             </div>
             <div>
-                <select class="mode-select" data-mode="{{ u.id }}">
-                    <option value="media" {% if u.sync_mode == 'media' %}selected{% endif %}>仅媒体</option>
-                    <option value="timeline" {% if u.sync_mode == 'timeline' %}selected{% endif %}>全部推文</option>
-                    <option value="replies" {% if u.sync_mode == 'replies' %}selected{% endif %}>全部+回复</option>
-                    <option value="none" {% if u.sync_mode == 'none' %}selected{% endif %}>不同步</option>
-                </select>
                 <button class="toggle {% if u.enabled %}on{% endif %}" type="button" data-toggle="{{ u.id }}" data-enabled="{{ 1 if u.enabled else 0 }}">
                     <span class="toggle-knob"></span>
                     <span class="toggle-label">{{ '已启用' if u.enabled else '已停用' }}</span>

@@ -86,8 +86,6 @@
                     <option value="curl" {% if sync.api_backend == 'curl' %}selected{% endif %}>curl_cffi（需要额外安装）</option>
                 </select>
             </label>
-            <label class="check"><input type="checkbox" name="include_retweets" {% if sync.include_retweets %}checked{% endif %}> timeline/replies 默认包含转推</label>
-            <label class="check"><input type="checkbox" name="download_quoted_media" {% if sync.download_quoted_media %}checked{% endif %}> 下载引用推文媒体（暂不启用）</label>
             <label class="check span-2"><input type="checkbox" name="export_json" {% if sync.export_json %}checked{% endif %}> 同步后导出每用户 JSON</label>
             <div class="form-actions span-2">
                 <button class="btn-primary" type="submit">保存同步参数</button>

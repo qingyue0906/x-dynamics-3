@@ -16,8 +16,6 @@ CREATE TABLE IF NOT EXISTS users (
     avatar_source    TEXT NOT NULL DEFAULT '',
     avatar_updated_at INTEGER,
     image_dir        TEXT NOT NULL DEFAULT '',
-    sync_mode        TEXT NOT NULL DEFAULT 'media',
-    include_retweets INTEGER NOT NULL DEFAULT 0,
     last_tweet_id    TEXT NOT NULL DEFAULT '0',
     last_sync_at     INTEGER,
     enabled          INTEGER NOT NULL DEFAULT 1,

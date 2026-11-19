@@ -24,12 +24,7 @@
         <div class="user-toolbar">
             {% if user.kind == 'user' %}
             <button class="btn-primary" type="button" data-sync-user="{{ user.id }}">同步这个用户</button>
-            <select class="mode-select" data-mode-user="{{ user.id }}">
-                <option value="media" {% if user.sync_mode == 'media' %}selected{% endif %}>仅媒体</option>
-                <option value="timeline" {% if user.sync_mode == 'timeline' %}selected{% endif %}>全部推文</option>
-                <option value="replies" {% if user.sync_mode == 'replies' %}selected{% endif %}>全部+回复</option>
-                <option value="none" {% if user.sync_mode == 'none' %}selected{% endif %}>不同步</option>
-            </select>
+            <span class="sub">仅同步媒体</span>
             {% endif %}
             {% if user.screen_name %}<a class="btn-ghost" href="https://x.com/{{ user.screen_name }}" target="_blank" rel="noopener">打开 X ↗</a>{% endif %}
         </div>

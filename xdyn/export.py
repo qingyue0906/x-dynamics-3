@@ -16,10 +16,9 @@ logger = logging.getLogger(__name__)
 USER_FIELDS = (
     "rest_id", "screen_name", "name", "kind", "bio", "location", "url",
     "avatar_url", "banner_url", "avatar_file", "banner_file", "avatar_source",
-    "avatar_updated_at", "image_dir", "sync_mode", "include_retweets",
-    "last_tweet_id", "last_sync_at", "enabled", "protected", "verified",
-    "followers_count", "following_count", "tweet_count", "media_count",
-    "source_path",
+    "avatar_updated_at", "image_dir", "last_tweet_id", "last_sync_at", "enabled",
+    "protected", "verified", "followers_count", "following_count", "tweet_count",
+    "media_count", "source_path",
 )
 POST_FIELDS = (
     "tweet_id", "author_id", "author_name", "author_screen_name", "kind", "text",
@@ -106,8 +105,6 @@ def import_exports(db: Database, config: Config, directory: Path | None = None, 
                 avatar_url=str(user.get("avatar_url") or ""),
                 banner_url=str(user.get("banner_url") or ""),
                 image_dir=str(user.get("image_dir") or ""),
-                sync_mode=str(user.get("sync_mode") or "media"),
-                include_retweets=bool(user.get("include_retweets")),
                 enabled=bool(user.get("enabled", 1)),
                 protected=bool(user.get("protected")),
                 verified=bool(user.get("verified")),

@@ -17,8 +17,6 @@ SEED_OPS = {
     "UserByScreenName": "AMIBMjtxEEATh4z8V9GtRg",
     "UserByRestId": "mxaYWwt52eAb6OAzYHMVzg",
     "UserMedia": "iTSlWbsmD00dAE7Sk9xvIw",
-    "UserTweets": "D6z-FJI2pKuwEeYYxVIGbg",
-    "UserTweetsAndReplies": "FmuxExUC21Xn_C2NwtX5sQ",
     "TweetDetail": "dQDdKtt882nl-Km98FJGSQ",
     "TweetResultByRestId": "LkId5Akr61BS6BmOIcffRg",
     "SearchTimeline": "BYppgupFFS2yqVmmRNjlsw",

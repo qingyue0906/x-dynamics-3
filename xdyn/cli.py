@@ -16,7 +16,6 @@ from .export import export_all, export_user, import_exports
 from .logging_setup import setup_logging
 from .migrate import migrate_twitter_download
 from .sync import print_sync_summary, resolve_user, sync_many
-from .userdata import prepare_runtime
 from .utils import human_size
 from .verify import repair_media, verify_media
 from .xclient import XClient
@@ -42,17 +41,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=False)
 
-    sync = sub.add_parser("sync", help="增量/全量同步用户")
+    sync = sub.add_parser("sync", help="增量/全量同步用户媒体")
     _add_common(sync)
     _add_sync_limits(sync)
     sync.add_argument("--all", action="store_true", help="同步所有启用用户（默认行为）")
     sync.add_argument("--user", help="@用户名、x.com/用户名 或数字 ID")
-    sync.add_argument("--mode", choices=("media", "timeline", "replies"), help="覆盖本次同步模式")
     sync.add_argument("--full", action="store_true", help="忽略断点，抓取全部历史")
     sync.add_argument("--dry-run", action="store_true", help="只抓取解析，不写库不下载")
     sync.add_argument("--no-download", action="store_true", help="只写元数据，不下载媒体")
     sync.add_argument("--limit-users", type=int, default=0, help="仅处理前 N 个用户")
-    sync.add_argument("--include-retweets", action="store_true", help="timeline/replies 模式包含转推")
 
     retry = sub.add_parser("retry", help="重试失败/缺失/待下载媒体")
     _add_common(retry)
@@ -138,16 +135,9 @@ def _cmd_sync(args, config) -> int:
             async with XClient(config) as client:
                 if args.user:
                     user = await resolve_user(db, config, client, args.user, enabled=True)
-                    if args.mode:
-                        db.set_user_mode(int(user["id"]), args.mode, include_retweets=args.include_retweets)
-                        user = db.get_user(int(user["id"]))
                     targets = [user]
                 else:
                     targets = list(db.list_sync_users())
-                    if args.mode:
-                        for user in targets:
-                            db.set_user_mode(int(user["id"]), args.mode, include_retweets=args.include_retweets)
-                        targets = list(db.list_sync_users())
                 if args.limit_users:
                     targets = targets[: args.limit_users]
                 if not targets:
@@ -166,8 +156,6 @@ def _cmd_sync(args, config) -> int:
 
 
 def _cmd_retry(args, config) -> int:
-    if not args.dry_run:
-        config.require_cookie()
     db = Database(config.db_path)
     try:
         asyncio.run(repair_media(
@@ -188,8 +176,6 @@ def _cmd_verify(args, config) -> int:
             stats["checked"], stats["ok"], stats["missing"], stats["restored"], human_size(stats["bytes"]),
         )
         if args.repair:
-            if not args.dry_run:
-                config.require_cookie()
             asyncio.run(repair_media(
                 db, config, user_id=args.user_id, max_media=args.max_media,
                 statuses=("missing", "failed", "pending"), dry_run=args.dry_run,
@@ -213,23 +199,31 @@ def _cmd_migrate(args, config) -> int:
 
 
 def _cmd_serve(args, config) -> int:
+    from .instance_lock import InstanceLock
     from .web.app import create_app
 
-    app = create_app(config)
-    url = f"http://{config.web.host}:{config.web.port}/"
-    logger.info("WebUI: %s", url)
-    if config.web.auto_open:
-        threading.Timer(1.0, lambda: webbrowser.open_new(url)).start()
-    if config.web.debug:
-        app.run(host=config.web.host, port=config.web.port, debug=True, use_reloader=False)
-        return 0
+    lock = InstanceLock(config.data_dir / "xdyn.lock")
+    if not lock.acquire():
+        logger.error("另一个 xdyn serve 已在运行，数据目录：%s", config.data_dir)
+        return 1
     try:
-        from waitress import serve
-        serve(app, host=config.web.host, port=config.web.port, threads=8)
-    except ImportError:
-        logger.warning("未安装 waitress，回退 Flask 开发服务器")
-        app.run(host=config.web.host, port=config.web.port, threaded=True, use_reloader=False)
-    return 0
+        app = create_app(config)
+        url = f"http://{config.web.host}:{config.web.port}/"
+        logger.info("WebUI: %s", url)
+        if config.web.auto_open:
+            threading.Timer(1.0, lambda: webbrowser.open_new(url)).start()
+        if config.web.debug:
+            app.run(host=config.web.host, port=config.web.port, debug=True, use_reloader=False)
+            return 0
+        try:
+            from waitress import serve
+            serve(app, host=config.web.host, port=config.web.port, threads=8)
+        except ImportError:
+            logger.warning("未安装 waitress，回退 Flask 开发服务器")
+            app.run(host=config.web.host, port=config.web.port, threaded=True, use_reloader=False)
+        return 0
+    finally:
+        lock.release()
 
 
 def _cmd_stats(args, config) -> int:
@@ -327,7 +321,6 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(raw_args)
     config = _make_config(args)
     setup_logging(config.logs_dir, args.command or "serve", verbose=getattr(args, "verbose", False))
-    prepare_runtime(config)
     handlers = {
         "sync": _cmd_sync,
         "retry": _cmd_retry,

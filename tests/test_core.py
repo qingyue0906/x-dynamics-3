@@ -60,6 +60,7 @@ def test_db_user_post_media(tmp_path):
     media_rows, more = db.list_media_with_posts()
     assert len(media_rows) == 1 and not more
     assert db.count_posts(q="world") == 1
+    assert db.count_posts(q="he") == 1
     assert db.stats()["posts"] == 1
     assert db.get_post_id(user_id, "100") == post_id
     db.close()

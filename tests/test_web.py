@@ -26,7 +26,7 @@ def seed(tmp_path):
         url="https://x.com/alice/status/123456789",
         media=[
             MediaRecord(media_key="m1", media_type="photo", url="https://x/1.png", download_url="https://x/1.png", file_name="pic.png", width=40, height=20, status="ok", local_size=10),
-            MediaRecord(media_key="m2", media_type="video", url="https://x/2.jpg", download_url="https://x/2.mp4", poster_url="https://x/2.jpg", file_name="clip.mp4", status="ok", local_size=10, duration_ms=65000),
+            MediaRecord(media_key="m2", media_type="video", url="https://x/2.jpg", download_url="https://x/2.mp4", poster_url="", file_name="clip.mp4", status="ok", local_size=10, duration_ms=65000),
         ],
     )
     with db.transaction():
@@ -72,6 +72,27 @@ def test_media_thumbnail_and_video(tmp_path):
     assert client.get("/media/9999").status_code == 404
 
 
+def test_video_poster_is_cached_locally(tmp_path, monkeypatch):
+    from io import BytesIO
+
+    import xdyn.web.app as webapp
+
+    config, _, _ = seed(tmp_path)
+    db = Database(config.db_path)
+    db.conn.execute("UPDATE media SET poster_url = ? WHERE id = 2", ("https://example.invalid/poster.jpg",))
+    db.close()
+    payload = BytesIO()
+    Image.new("RGB", (64, 36), (10, 20, 30)).save(payload, "JPEG")
+    monkeypatch.setattr(webapp, "_fetch_remote_image", lambda config, url: payload.getvalue())
+    app = create_app(config)
+    client = app.test_client()
+    response = client.get("/thumb/2")
+    assert response.status_code == 200
+    assert response.mimetype == "image/webp"
+    assert response.data.startswith(b"RIFF")
+    assert client.get("/thumb/2").status_code == 200
+
+
 def test_avatar_banner_and_toggle(tmp_path):
     config, user_id, _ = seed(tmp_path)
     app = create_app(config)
@@ -82,8 +103,7 @@ def test_avatar_banner_and_toggle(tmp_path):
     response = client.post(f"/api/users/{user_id}/toggle", json={"enabled": False}, headers={"X-Xdyn": "1"})
     assert response.status_code == 200
     assert client.post(f"/api/users/{user_id}/toggle", json={"enabled": True}).status_code == 403
-    response = client.post(f"/api/users/{user_id}/mode", json={"mode": "timeline"}, headers={"X-Xdyn": "1"})
-    assert response.status_code == 200
+    assert client.post(f"/api/users/{user_id}/mode", json={"mode": "timeline"}, headers={"X-Xdyn": "1"}).status_code == 404
 
 
 def test_settings_csrf_and_cookies(tmp_path):

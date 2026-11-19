@@ -50,7 +50,7 @@ class FakeClient:
         self.pages = pages
         self.calls = []
 
-    async def fetch_page(self, rest_id, mode, cursor="", count=None):
+    async def fetch_page(self, rest_id, cursor="", count=None):
         self.calls.append(cursor)
         return self.pages[cursor]
 

@@ -62,17 +62,6 @@
         });
     });
 
-    document.querySelectorAll('[data-mode]').forEach((select) => {
-        select.addEventListener('change', async () => {
-            try {
-                await api(`/api/users/${Number(select.dataset.mode)}/mode`, { mode: select.value });
-                toast('同步模式已更新', 'ok');
-            } catch (error) {
-                toast(error.message, 'error');
-            }
-        });
-    });
-
     document.querySelectorAll('[data-sync]').forEach((button) => {
         button.addEventListener('click', () => startJob('/api/sync', {
             user_ids: [Number(button.dataset.sync)],

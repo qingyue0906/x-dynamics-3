@@ -251,7 +251,6 @@ def _normalize_tweet(obj: Any, owner_screen_name: str = "", image_format: str = 
             author_screen_name=str(quoted_user.get("screen_name") or ""),
             text=_tweet_text(quoted_base),
             url=f"https://x.com/{quoted_user.get('screen_name') or 'i'}/status/{quoted_id}" if quoted_id else "",
-            media=_media_records(quoted_id, _tweet_media(quoted_base), image_format) if quoted_id else [],
         )
 
     if retweet_inner:

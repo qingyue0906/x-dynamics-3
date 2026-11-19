@@ -25,8 +25,6 @@ class SyncConfig:
     max_media: int = 0
     max_empty_pages: int = 3
     page_size: int = 40
-    include_retweets: bool = False
-    download_quoted_media: bool = False
     image_format: str = "orig"
     proxy: str = ""
     api_backend: str = "httpx"
@@ -193,8 +191,6 @@ def load_config(
         max_media=max(0, int(sync_values["max_media"] if max_media is None else max_media)),
         max_empty_pages=int(sync_values["max_empty_pages"]),
         page_size=int(sync_values["page_size"]),
-        include_retweets=bool(sync_values["include_retweets"]),
-        download_quoted_media=bool(sync_values["download_quoted_media"]),
         image_format=str(sync_values["image_format"]),
         proxy=str(sync_values["proxy"]),
         api_backend=str(sync_values["api_backend"]),

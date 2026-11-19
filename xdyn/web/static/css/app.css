@@ -1473,7 +1473,6 @@ body.lb-open { overflow: hidden; }
 .video-poster { width: 100%; height: 100%; object-fit: cover; display: block; background: #000; }
 .lb-stage video { max-width: min(92vw, 1500px); max-height: 78vh; border-radius: 8px; background: #000; }
 .lb-stage img { max-width: min(92vw, 1500px); max-height: 78vh; object-fit: contain; }
-.mode-select { height: 30px; border: 1px solid var(--line); border-radius: 7px; background: var(--card); color: var(--text); padding: 0 6px; font-size: 12px; }
 .user-kind-badge { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 999px; background: var(--bg-soft); color: var(--muted); font-size: 11px; font-weight: 500; }
 .collection-group-title { padding: 12px 10px 4px; color: var(--muted); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
 .sensitive-cover { position: relative; }

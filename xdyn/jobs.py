@@ -78,7 +78,6 @@ def run_sync(
 
 def run_retry(ctx: JobContext, user_ids: list[int] | None = None, max_media: int = 0) -> None:
     config = _config(ctx)
-    config.require_cookie()
     db = Database(config.db_path)
     try:
         rows = db.get_repair_media(user_ids=user_ids, limit=0, statuses=("missing", "failed", "pending"))

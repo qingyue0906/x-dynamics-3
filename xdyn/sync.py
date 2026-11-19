@@ -113,7 +113,6 @@ def ensure_collection(
         kind=kind,
         image_dir=image_dir,
         enabled=False,
-        sync_mode="none",
         source_path=source_path,
     )
     return db.get_user(user_id)
@@ -190,15 +189,10 @@ async def sync_user(
     cancel_check: CancelCheck | None = None,
 ) -> SyncResult:
     user_id = int(user["id"])
-    mode = str(user["sync_mode"] or "media")
     result = SyncResult(user_id=user_id, name=str(user["name"] or user["screen_name"] or user_id))
     if str(user["kind"]) != "user":
         result.status = "skipped"
         result.message = "导入集合不参与同步"
-        return result
-    if mode not in ("media", "timeline", "replies"):
-        result.status = "skipped"
-        result.message = "该用户已设置为不同步"
         return result
     rest_id = str(user["rest_id"] or "")
     if not rest_id:
@@ -214,10 +208,6 @@ async def sync_user(
         )
         user = db.get_user(user_id)
         result.name = str(user["name"] or result.name)
-    if mode == "media" and config.sync.include_retweets:
-        include_retweets = True
-    else:
-        include_retweets = bool(user["include_retweets"])
 
     stop_id = 0 if full else int(user["last_tweet_id"] or 0)
     pages_limit = config.sync.max_pages if max_pages is None else max_pages
@@ -231,14 +221,14 @@ async def sync_user(
     stopped_by_limit = False
     empty_retry = 0
     empty_pages = 0
-    logger.info("%s (@%s) 开始%s同步：%s%s", result.name, user["screen_name"], "全量" if full else "增量", mode, "（dry-run）" if dry_run else "")
+    logger.info("%s (@%s) 开始%s媒体同步%s", result.name, user["screen_name"], "全量" if full else "增量", "（dry-run）" if dry_run else "")
     _emit(on_event, {"event": "user_start", "user_id": user_id, "name": result.name})
 
     try:
         while True:
             if cancel_check:
                 cancel_check()
-            payload = await client.fetch_page(rest_id, mode, cursor, count=config.sync.page_size)
+            payload = await client.fetch_page(rest_id, cursor, count=config.sync.page_size)
             posts, next_cursor = extract_timeline(
                 payload,
                 owner_screen_name=str(user["screen_name"] or ""),
@@ -270,9 +260,9 @@ async def sync_user(
                     page_max = max(page_max, int(post.tweet_id))
                 except (TypeError, ValueError):
                     pass
-                if mode == "media" and not post.media:
+                if not post.media:
                     continue
-                if post.is_retweet and not include_retweets:
+                if post.is_retweet:
                     continue
                 if full or int(post.tweet_id) > stop_id:
                     candidates.append(post)

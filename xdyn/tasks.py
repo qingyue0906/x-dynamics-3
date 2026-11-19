@@ -61,13 +61,26 @@ class JobContext:
 
 
 def read_log_tail(path: Path, limit: int = 120) -> list[str]:
-    if not path or not Path(path).is_file():
+    if not path:
+        return []
+    file_path = Path(path)
+    if not file_path.is_file():
         return []
     try:
-        lines = Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
+        with file_path.open("rb") as handle:
+            handle.seek(0, 2)
+            size = handle.tell()
+            block = min(size, 256 * 1024)
+            handle.seek(size - block)
+            data = handle.read(block)
     except OSError:
         return []
-    return lines[-limit:]
+    text = data.decode("utf-8", errors="replace")
+    lines = text.splitlines()
+    if block < size and lines:
+        # The first line may have been cut in the middle.
+        lines = lines[1:]
+    return lines[-max(1, int(limit)):]
 
 
 class TaskManager:

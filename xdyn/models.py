@@ -36,7 +36,6 @@ class QuotedPost:
     author_screen_name: str = ""
     text: str = ""
     url: str = ""
-    media: list[MediaRecord] = field(default_factory=list)
 
 
 @dataclass

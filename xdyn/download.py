@@ -14,13 +14,17 @@ from .config import Config
 from .db import Database
 from .errors import JobCancelled
 from .http import DEFAULT_UA
-from .utils import extension_for_content_type, media_kind, resolve_media_path
+from .utils import detect_media_kind, extension_for_content_type, media_kind, resolve_media_path
 
 logger = logging.getLogger(__name__)
 
 CHUNK = 64 * 1024
 IMAGE_TYPES = ("image/", "application/octet-stream", "binary/octet-stream")
 VIDEO_TYPES = ("video/", "application/octet-stream", "binary/octet-stream")
+
+
+class InvalidMediaError(Exception):
+    """A 200 response that is not the expected image/video payload."""
 
 
 @dataclass
@@ -172,18 +176,26 @@ class Downloader:
                             )
                             allowed = VIDEO_TYPES if is_video else IMAGE_TYPES
                             if content_type and not content_type.startswith(allowed):
-                                if content_type.startswith("text/") or "html" in content_type:
-                                    raise ValueError(f"非媒体响应：{content_type}")
+                                raise InvalidMediaError(f"非媒体响应：{content_type}")
                             size = 0
                             with open(part, "wb") as handle:
                                 async for chunk in response.aiter_bytes(CHUNK):
                                     handle.write(chunk)
                                     size += len(chunk)
                             if size <= 0:
-                                raise ValueError("空文件")
+                                raise InvalidMediaError("空文件")
+                            with open(part, "rb") as handle:
+                                head = handle.read(32)
+                            detected = detect_media_kind(head)
+                            expected = "video" if is_video else "image"
+                            if detected != expected:
+                                label = "视频" if is_video else "图片"
+                                raise InvalidMediaError(
+                                    f"内容不是{label}（Content-Type={content_type or 'unknown'}）"
+                                )
                             ext = extension_for_content_type(content_type)
                             new_name = target.name
-                            if ext and target.suffix.lower() != ext and ext in (".jpg", ".png", ".webp", ".gif", ".mp4", ".webm", ".mov"):
+                            if ext and target.suffix.lower() != ext and ext in (".jpg", ".png", ".webp", ".gif", ".avif", ".heic", ".mp4", ".webm", ".mov"):
                                 new_name = target.stem + ext
                             final_target = target.with_name(new_name)
                             os.replace(part, final_target)
@@ -237,6 +249,9 @@ class Downloader:
                         break
                 except asyncio.CancelledError:
                     raise
+                except InvalidMediaError as exc:
+                    last_error = str(exc)
+                    break
                 except Exception as exc:
                     last_error = str(exc)
                     if attempt < retries:

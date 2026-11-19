@@ -1,7 +1,7 @@
 {% set media_count = post.media|length %}
 <article class="post-card" data-tweet-id="{{ post.tweet_id }}">
     {% if post.kind == 'retweet' %}
-    <div class="post-retweet-line">🔁 {{ post.owner_name or post.display_name }} 转推了</div>
+    <div class="post-retweet-line">🔁 转推自 {{ post.author_name or '' }}{% if post.author_screen_name %} @{{ post.author_screen_name }}{% endif %}</div>
     {% endif %}
     <header class="post-head">
         <a class="avatar post-avatar" href="{{ url_for('user_page', user_id=post.user_id) }}" style="--hue: {{ post.user_id % 360 }}">
@@ -39,16 +39,12 @@
             {% if item.is_video %}
             <button class="media-cell {% if blur_media %}sensitive-cover{% endif %}" type="button"
                     data-full="{{ full_url }}" data-video="1"
-                    data-poster="{{ item.poster_url or '' }}"
+                    data-poster="{{ url_for('thumb', media_id=item.id, w=900) if item.poster_url else '' }}"
                     data-author="{{ post.display_name or '' }}"
                     data-time="{{ post.time_str }}"
                     data-tweet="{{ post.x_url }}"
                     title="播放视频">
-                {% if item.poster_url %}
-                <img class="video-poster" src="{{ item.poster_url }}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer">
-                {% else %}
                 <img class="video-poster" src="{{ url_for('thumb', media_id=item.id) }}" alt="" loading="lazy" decoding="async">
-                {% endif %}
                 <span class="media-badge">{{ 'GIF' if item.media_type == 'animated_gif' else '视频' }}</span>
                 {% if item.duration_ms %}<span class="media-duration">{{ (item.duration_ms // 1000) // 60 }}:{{ '%02d' % ((item.duration_ms // 1000) % 60) }}</span>{% endif %}
             </button>
