@@ -59,6 +59,7 @@
                 <span>{{ u.post_count }} 条</span>
                 <span class="muted">{{ u.ok_media_count }} 媒体</span>
                 {% if u.last_sync_at %}<span class="muted">上次 {{ u.last_sync_at|timestamp_time }}</span>{% endif %}
+                {% if u.sync_active %}<span class="badge-soft">有断点</span>{% endif %}
             </div>
             <div>
                 <button class="toggle {% if u.enabled %}on{% endif %}" type="button" data-toggle="{{ u.id }}" data-enabled="{{ 1 if u.enabled else 0 }}">
@@ -69,6 +70,7 @@
             <div class="user-actions">
                 <button class="btn-mini" type="button" data-sync="{{ u.id }}">同步</button>
                 <button class="btn-mini" type="button" data-retry="{{ u.id }}">重试</button>
+                {% if u.sync_active %}<button class="btn-mini danger" type="button" data-reset-sync="{{ u.id }}">清断点</button>{% endif %}
                 <a class="btn-mini ghost" href="{{ url_for('user_page', user_id=u.id) }}">画廊</a>
             </div>
         </div>

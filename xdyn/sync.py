@@ -12,7 +12,7 @@ from .avatars import download_avatar, download_banner
 from .config import Config
 from .db import Database
 from .download import DownloadStats, Downloader
-from .errors import JobCancelled
+from .errors import JobCancelled, describe_error
 from .export import export_user
 from .extract import extract_timeline
 from .utils import parse_user_input, slugify_name
@@ -209,20 +209,47 @@ async def sync_user(
         user = db.get_user(user_id)
         result.name = str(user["name"] or result.name)
 
-    stop_id = 0 if full else int(user["last_tweet_id"] or 0)
     pages_limit = config.sync.max_pages if max_pages is None else max_pages
     media_budget = config.sync.max_media if max_media is None else max_media
     media_slots = media_budget if media_budget > 0 else None
     run_id = None if dry_run else db.start_sync_run(user_id)
-    cursor = ""
-    seen_cursor = ""
-    seen_cursors: set[str] = set()
-    seen_max = stop_id
+    resumed = False
+    if dry_run:
+        cursor = ""
+        stop_id = 0 if full else int(user["last_tweet_id"] or 0)
+        seen_max = stop_id
+    elif full:
+        cursor = ""
+        stop_id = 0
+        seen_max = 0
+        db.set_sync_session(user_id, "", 0, 0)
+    elif bool(user["sync_active"]):
+        cursor = str(user["sync_cursor"] or "")
+        stop_id = int(user["sync_target_id"] or 0)
+        seen_max = max(stop_id, int(user["sync_max_id"] or 0))
+        resumed = True
+        logger.info(
+            "  %s (@%s) 从上次断点继续：target=%s，cursor=%s",
+            result.name, user["screen_name"], stop_id, cursor[:16] or "(top)",
+        )
+    else:
+        cursor = ""
+        stop_id = int(user["last_tweet_id"] or 0)
+        seen_max = stop_id
+        db.set_sync_session(user_id, "", stop_id, seen_max)
+    seen_cursor = cursor
+    seen_cursors: set[str] = {cursor} if cursor else set()
     stopped_by_limit = False
+    stopped_by_cursor = False
+    session_completed = False
     empty_retry = 0
     empty_pages = 0
-    logger.info("%s (@%s) 开始%s媒体同步%s", result.name, user["screen_name"], "全量" if full else "增量", "（dry-run）" if dry_run else "")
-    _emit(on_event, {"event": "user_start", "user_id": user_id, "name": result.name})
+    logger.info(
+        "%s (@%s) 开始%s媒体同步%s%s",
+        result.name, user["screen_name"], "全量" if full else "增量",
+        "（断点续传）" if resumed else "", "（dry-run）" if dry_run else "",
+    )
+    _emit(on_event, {"event": "user_start", "user_id": user_id, "name": result.name, "resumed": resumed})
 
     try:
         while True:
@@ -237,13 +264,22 @@ async def sync_user(
             pages_done = result.pages + 1
             if not posts:
                 empty_pages += 1
-                if next_cursor == cursor and empty_retry < 1:
-                    empty_retry += 1
-                    logger.warning("  第 %d 页为空，可能限流或数据延迟，重试一次", pages_done)
-                    await polite_sleep(config)
-                    continue
+                if next_cursor == cursor:
+                    if empty_retry < 1:
+                        empty_retry += 1
+                        logger.warning("  第 %d 页为空，可能限流或数据延迟，重试一次", pages_done)
+                        await polite_sleep(config)
+                        continue
+                    result.pages = pages_done
+                    session_completed = True
+                    logger.warning(
+                        "  第 %d 页为空且 cursor 未推进，视为时间线结束",
+                        pages_done,
+                    )
+                    break
                 if empty_pages >= config.sync.max_empty_pages:
                     result.pages = pages_done
+                    session_completed = True
                     logger.warning(
                         "  连续 %d 页没有解析到推文，视为时间线结束（第 %d 页）",
                         empty_pages, pages_done,
@@ -267,6 +303,9 @@ async def sync_user(
                 if full or int(post.tweet_id) > stop_id:
                     candidates.append(post)
 
+            if page_max > seen_max:
+                seen_max = page_max
+
             if dry_run:
                 result.new_posts += len(candidates)
                 result.new_media += sum(len(post.media) for post in candidates)
@@ -284,10 +323,6 @@ async def sync_user(
                                 result.new_posts += 1
                                 result.new_media += len(post.media)
                             post_ids.append(post_id)
-                        if page_max > seen_max:
-                            seen_max = page_max
-                            if not full:
-                                db.set_last_tweet_id(user_id, seen_max, int(time.time()))
                     author_avatar = next(
                         (post.author_avatar for post in candidates if post.author_avatar), ""
                     )
@@ -324,47 +359,70 @@ async def sync_user(
             })
 
             if not full and stop_id > 0 and page_max and page_max <= stop_id:
+                session_completed = True
                 break
-            if not next_cursor or next_cursor == seen_cursor:
+            if not next_cursor:
+                session_completed = True
                 break
-            if next_cursor in seen_cursors:
-                logger.warning("  检测到 cursor 循环，停止同步（第 %d 页）", pages_done)
+            if next_cursor == seen_cursor or next_cursor in seen_cursors:
+                logger.warning("  检测到 cursor 未推进或循环，停止同步（第 %d 页）", pages_done)
+                if dry_run:
+                    session_completed = True
+                else:
+                    stopped_by_cursor = True
                 break
             seen_cursors.add(next_cursor)
-            seen_cursor = cursor = next_cursor
+            seen_cursor = next_cursor
             if pages_limit and pages_done >= pages_limit:
                 stopped_by_limit = True
-                logger.info("  达到 max_pages=%s，停止", pages_limit)
+                logger.info("  达到 max_pages=%s，保存断点后停止", pages_limit)
+                if not dry_run:
+                    db.set_sync_session(user_id, next_cursor, stop_id, seen_max)
+                cursor = next_cursor
                 break
+            if not dry_run:
+                db.set_sync_session(user_id, next_cursor, stop_id, seen_max)
+            cursor = next_cursor
             await polite_sleep(config)
 
-        if not dry_run and full and not stopped_by_limit and seen_max > 0:
+        if not dry_run and session_completed:
             db.set_last_tweet_id(user_id, seen_max, int(time.time()))
+            db.clear_sync_session(user_id)
         result.status = "ok"
+        if stopped_by_cursor:
+            result.status = "failed"
+            result.message = "cursor 未推进，断点已保存；请清除断点或使用全量同步"
+        elif stopped_by_limit and not session_completed:
+            result.message = "达到 max_pages，断点已保存，下次同步继续"
         if run_id is not None:
-            db.finish_sync_run(run_id, "ok", pages=result.pages, new_posts=result.new_posts, new_media=result.new_media)
+            db.finish_sync_run(
+                run_id, "failed" if stopped_by_cursor else "ok",
+                pages=result.pages, new_posts=result.new_posts,
+                new_media=result.new_media, message=result.message[:500],
+            )
         if config.sync.export_json and not dry_run:
             export_user(db, config, user_id)
         logger.info(
-            "%s (@%s) 完成：%d 页，新增 %d 条，媒体 %d；下载 %d 成功 / %d 跳过 / %d 失败 / %d 失效 / %d 受限",
+            "%s (@%s) 完成：%d 页，新增 %d 条，媒体 %d；下载 %d 成功 / %d 跳过 / %d 失败 / %d 失效 / %d 受限%s",
             result.name, user["screen_name"], result.pages, result.new_posts, result.new_media,
             result.download.ok, result.download.skipped, result.download.failed,
             result.download.dead, result.download.restricted,
+            "；断点已保存" if (stopped_by_limit or stopped_by_cursor) and not session_completed else "",
         )
         return result
     except JobCancelled:
         result.status = "cancelled"
-        result.message = "已取消"
+        result.message = "已取消，断点已保存" if not dry_run else "已取消"
         if run_id is not None:
             db.finish_sync_run(run_id, "cancelled", pages=result.pages, new_posts=result.new_posts, new_media=result.new_media, message="cancelled")
         logger.warning("%s (@%s) 同步已取消", result.name, user["screen_name"])
         raise
     except Exception as exc:
         result.status = "failed"
-        result.message = str(exc)
+        result.message = describe_error(exc)
         if run_id is not None:
-            db.finish_sync_run(run_id, "failed", pages=result.pages, new_posts=result.new_posts, new_media=result.new_media, message=str(exc)[:500])
-        logger.exception("%s (@%s) 同步失败：%s", result.name, user["screen_name"], exc)
+            db.finish_sync_run(run_id, "failed", pages=result.pages, new_posts=result.new_posts, new_media=result.new_media, message=result.message[:500])
+        logger.exception("%s (@%s) 同步失败：%s；断点已保留", result.name, user["screen_name"], result.message)
         raise
 
 
@@ -400,8 +458,9 @@ async def sync_many(
             except JobCancelled:
                 raise
             except Exception as exc:
-                results.append(SyncResult(user_id=int(user["id"]), name=str(user["name"]), status="failed", message=str(exc)))
-                logger.error("用户 %s (@%s) 失败，继续下一个：%s", user["name"], user["screen_name"], exc)
+                detail = describe_error(exc)
+                results.append(SyncResult(user_id=int(user["id"]), name=str(user["name"]), status="failed", message=detail))
+                logger.error("用户 %s (@%s) 失败，继续下一个：%s", user["name"], user["screen_name"], detail)
             _emit(on_event, {
                 "event": "user_done", "done": index, "total": total,
                 "user_id": int(user["id"]), "name": str(user["name"]),

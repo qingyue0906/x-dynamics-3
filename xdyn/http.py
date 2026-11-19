@@ -89,6 +89,7 @@ class HttpClient:
                     timeout or config.sync.timeout,
                     connect=config.sync.connect_timeout,
                 ),
+                limits=httpx.Limits(max_keepalive_connections=10, keepalive_expiry=30),
                 headers=all_headers,
                 cookies=cookies or {},
             )

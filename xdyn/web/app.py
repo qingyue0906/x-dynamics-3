@@ -452,6 +452,14 @@ def create_app(config: Config) -> Flask:
         db.set_user_enabled(user_id, enabled)
         return jsonify(ok=True, user_id=user_id, enabled=enabled)
 
+    @app.post("/api/users/<int:user_id>/reset-sync")
+    def api_user_reset_sync(user_id: int):
+        db = get_db()
+        if not db.get_user(user_id):
+            return jsonify(ok=False, error="用户不存在"), 404
+        db.clear_sync_session(user_id)
+        return jsonify(ok=True)
+
     # ---------------- job helpers ----------------
 
     def _submit(kind: str, target: str, func) -> int:

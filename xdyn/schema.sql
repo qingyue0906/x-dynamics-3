@@ -18,6 +18,10 @@ CREATE TABLE IF NOT EXISTS users (
     image_dir        TEXT NOT NULL DEFAULT '',
     last_tweet_id    TEXT NOT NULL DEFAULT '0',
     last_sync_at     INTEGER,
+    sync_cursor      TEXT NOT NULL DEFAULT '',
+    sync_target_id   TEXT NOT NULL DEFAULT '0',
+    sync_max_id      TEXT NOT NULL DEFAULT '0',
+    sync_active      INTEGER NOT NULL DEFAULT 0,
     enabled          INTEGER NOT NULL DEFAULT 1,
     protected        INTEGER NOT NULL DEFAULT 0,
     verified         INTEGER NOT NULL DEFAULT 0,
@@ -137,5 +141,3 @@ CREATE TABLE IF NOT EXISTS jobs (
 
 CREATE INDEX IF NOT EXISTS idx_jobs_created ON jobs(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
-
-PRAGMA user_version = 1;

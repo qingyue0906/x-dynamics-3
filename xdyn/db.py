@@ -11,6 +11,14 @@ from .utils import canonical_media_key, format_ts
 
 logger = logging.getLogger(__name__)
 
+SCHEMA_VERSION = 2
+USER_SYNC_COLUMNS = (
+    ("sync_cursor", "TEXT NOT NULL DEFAULT ''"),
+    ("sync_target_id", "TEXT NOT NULL DEFAULT '0'"),
+    ("sync_max_id", "TEXT NOT NULL DEFAULT '0'"),
+    ("sync_active", "INTEGER NOT NULL DEFAULT 0"),
+)
+
 
 class Database:
     """Small SQLite wrapper with WAL and page transactions."""
@@ -83,17 +91,28 @@ class Database:
             ).fetchone()
         )
         version = int(self.conn.execute("PRAGMA user_version").fetchone()[0])
-        if has_users and version < 1:
+        if has_users and version < SCHEMA_VERSION:
             self._backup_before_upgrade(version)
         schema = (Path(__file__).with_name("schema.sql")).read_text(encoding="utf-8")
         self.conn.executescript(schema)
-        self.conn.execute("PRAGMA user_version = 1")
+        self._ensure_sync_columns()
+        self.conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         self._init_fts()
+
+    def _ensure_sync_columns(self) -> None:
+        columns = {
+            str(row["name"])
+            for row in self.conn.execute("PRAGMA table_info(users)").fetchall()
+        }
+        for name, definition in USER_SYNC_COLUMNS:
+            if name not in columns:
+                self.conn.execute(f"ALTER TABLE users ADD COLUMN {name} {definition}")
+                logger.info("数据库迁移：users 增加字段 %s", name)
 
     def _backup_before_upgrade(self, version: int) -> None:
         backup_dir = self.path.parent / "backups"
         backup_dir.mkdir(parents=True, exist_ok=True)
-        target = backup_dir / f"x-before-v1-{time.strftime('%Y%m%d-%H%M%S')}.db"
+        target = backup_dir / f"x-before-v{SCHEMA_VERSION}-{time.strftime('%Y%m%d-%H%M%S')}.db"
         try:
             destination = sqlite3.connect(str(target))
             try:
@@ -324,6 +343,34 @@ class Database:
             WHERE id = ?
             """,
             (value, value, ts, ts, int(time.time()), int(user_id)),
+        )
+
+    def set_sync_session(
+        self,
+        user_id: int,
+        cursor: str = "",
+        target_id: str | int = "0",
+        max_id: str | int = "0",
+    ) -> None:
+        self.conn.execute(
+            """
+            UPDATE users SET
+                sync_cursor = ?, sync_target_id = ?, sync_max_id = ?, sync_active = 1,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (str(cursor or ""), str(target_id or "0"), str(max_id or "0"), int(time.time()), int(user_id)),
+        )
+
+    def clear_sync_session(self, user_id: int) -> None:
+        self.conn.execute(
+            """
+            UPDATE users SET
+                sync_cursor = '', sync_target_id = '0', sync_max_id = '0', sync_active = 0,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (int(time.time()), int(user_id)),
         )
 
     def list_users_with_counts(self):

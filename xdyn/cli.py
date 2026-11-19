@@ -46,7 +46,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_sync_limits(sync)
     sync.add_argument("--all", action="store_true", help="同步所有启用用户（默认行为）")
     sync.add_argument("--user", help="@用户名、x.com/用户名 或数字 ID")
-    sync.add_argument("--full", action="store_true", help="忽略断点，抓取全部历史")
+    sync.add_argument("--full", action="store_true", help="忽略断点，抓取全部历史（会重置该用户断点）")
     sync.add_argument("--dry-run", action="store_true", help="只抓取解析，不写库不下载")
     sync.add_argument("--no-download", action="store_true", help="只写元数据，不下载媒体")
     sync.add_argument("--limit-users", type=int, default=0, help="仅处理前 N 个用户")
@@ -237,6 +237,8 @@ def _cmd_stats(args, config) -> int:
         print("")
         for user in db.list_users_with_counts():
             state = "启用" if user["enabled"] else ("集合" if user["kind"] != "user" else "停用")
+            if user["sync_active"]:
+                state += "·断点"
             print(f"  [{state}] {user['name']} (@{user['screen_name']}) {user['post_count']} 条 / {user['media_ref_count']} 媒体")
         return 0
     finally:

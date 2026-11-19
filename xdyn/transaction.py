@@ -58,10 +58,13 @@ class TransactionProvider:
         client = await self._public_client()
         return await client.get(url, **kwargs)
 
-    async def close(self) -> None:
+    async def reset_public(self) -> None:
         if self._public_http is not None:
             await self._public_http.close()
             self._public_http = None
+
+    async def close(self) -> None:
+        await self.reset_public()
 
     async def refresh(self) -> None:
         async with self._lock:

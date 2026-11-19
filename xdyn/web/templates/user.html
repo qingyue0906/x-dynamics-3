@@ -25,6 +25,10 @@
             {% if user.kind == 'user' %}
             <button class="btn-primary" type="button" data-sync-user="{{ user.id }}">同步这个用户</button>
             <span class="sub">仅同步媒体</span>
+            {% if user.sync_active %}
+            <span class="badge-soft">有断点</span>
+            <button class="btn-mini danger" type="button" data-reset-sync="{{ user.id }}">清断点</button>
+            {% endif %}
             {% endif %}
             {% if user.screen_name %}<a class="btn-ghost" href="https://x.com/{{ user.screen_name }}" target="_blank" rel="noopener">打开 X ↗</a>{% endif %}
         </div>

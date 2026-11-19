@@ -106,6 +106,24 @@ def test_avatar_banner_and_toggle(tmp_path):
     assert client.post(f"/api/users/{user_id}/mode", json={"mode": "timeline"}, headers={"X-Xdyn": "1"}).status_code == 404
 
 
+def test_reset_sync_session(tmp_path):
+    config, user_id, _ = seed(tmp_path)
+    db = Database(config.db_path)
+    db.set_sync_session(user_id, "cursor-1", 0, 100)
+    db.close()
+    app = create_app(config)
+    client = app.test_client()
+    assert client.get("/users").status_code == 200
+    assert client.get(f"/user/{user_id}").status_code == 200
+    assert client.post(f"/api/users/{user_id}/reset-sync", json={}).status_code == 403
+    response = client.post(f"/api/users/{user_id}/reset-sync", json={}, headers={"X-Xdyn": "1"})
+    assert response.status_code == 200
+    db = Database(config.db_path)
+    user = db.get_user(user_id)
+    assert user["sync_active"] == 0
+    db.close()
+
+
 def test_settings_csrf_and_cookies(tmp_path):
     config, _, _ = seed(tmp_path)
     app = create_app(config)

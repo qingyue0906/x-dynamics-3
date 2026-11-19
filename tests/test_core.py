@@ -30,6 +30,22 @@ def test_settings_and_cookie_parse(tmp_path):
     assert "auth_token" in masked and masked["auth_token"] is True
 
 
+def test_db_schema_and_sync_session(tmp_path):
+    config = load_config(base_dir=tmp_path, data_dir=tmp_path / "data")
+    db = Database(config.db_path)
+    assert db.conn.execute("PRAGMA user_version").fetchone()[0] == 2
+    columns = {row["name"] for row in db.conn.execute("PRAGMA table_info(users)")}
+    assert {"sync_cursor", "sync_target_id", "sync_max_id", "sync_active"} <= columns
+    user_id = db.upsert_user(rest_id="9", screen_name="bob", name="Bob", image_dir="images/bob")
+    db.set_sync_session(user_id, "cursor-1", 100, 200)
+    user = db.get_user(user_id)
+    assert (user["sync_active"], user["sync_cursor"], user["sync_target_id"], user["sync_max_id"]) == (1, "cursor-1", "100", "200")
+    db.clear_sync_session(user_id)
+    user = db.get_user(user_id)
+    assert (user["sync_active"], user["sync_cursor"], user["sync_max_id"]) == (0, "", "0")
+    db.close()
+
+
 def test_db_user_post_media(tmp_path):
     config = load_config(base_dir=tmp_path, data_dir=tmp_path / "data")
     db = Database(config.db_path)

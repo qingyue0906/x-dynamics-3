@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import re
 import time
 from typing import Any
@@ -9,7 +10,14 @@ from typing import Any
 import httpx
 
 from .config import Config
-from .errors import XApiError, XAuthError, XRateLimitError, XStaleError, XTransactionError
+from .errors import (
+    XApiError,
+    XAuthError,
+    XRateLimitError,
+    XStaleError,
+    XTransactionError,
+    describe_error,
+)
 from .extract import extract_user
 from .gql import (
     FIELD_TOGGLES,
@@ -37,7 +45,7 @@ class XClient:
         config.require_cookie()
         self.config = config
         self.registry = QueryRegistry(config.query_cache_path)
-        headers = {
+        self._headers = {
             "Authorization": f"Bearer {BEARER}",
             "X-Csrf-Token": config.ct0,
             "X-Twitter-Auth-Type": "OAuth2Session",
@@ -46,8 +54,23 @@ class XClient:
             "Referer": "https://x.com/",
             "Origin": "https://x.com",
         }
-        self.http = HttpClient(config, headers=headers, cookies=config.cookie_map)
+        self.http = self._build_http()
         self.transaction = TransactionProvider(config, self.http)
+
+    def _build_http(self) -> HttpClient:
+        return HttpClient(
+            self.config,
+            headers=self._headers,
+            cookies=self.config.cookie_map,
+        )
+
+    async def _reset_http(self) -> None:
+        """Drop pooled sockets after a proxy/VPN reset and start clean."""
+        old = self.http
+        self.http = self._build_http()
+        self.transaction.http = self.http
+        await self.transaction.reset_public()
+        await old.close()
 
     async def __aenter__(self) -> "XClient":
         return self
@@ -118,7 +141,7 @@ class XClient:
         variables: dict,
         features: dict | None = None,
         field_toggles: dict | None = None,
-        max_attempts: int = 4,
+        max_attempts: int = 6,
     ) -> dict:
         features_obj = dict(features or GQL_FEATURES)
         toggles = dict(field_toggles or {})
@@ -172,12 +195,19 @@ class XClient:
                 raise
             except XTransactionError:
                 raise
-            except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as exc:
+            except httpx.TransportError as exc:
                 last_error = exc
                 if attempt >= max_attempts - 1:
                     break
-                wait = min(30.0, 2.0 * (2 ** attempt))
-                logger.warning("%s 请求网络异常：%s，%.1fs 后重试", operation, exc, wait)
+                wait = min(60.0, 2.0 * (2 ** attempt)) + random.uniform(0.0, 1.0)
+                logger.warning(
+                    "%s 请求网络异常（%s），%.1fs 后重建连接并重试",
+                    operation, describe_error(exc), wait,
+                )
+                try:
+                    await self._reset_http()
+                except Exception as reset_exc:
+                    logger.warning("重建 HTTP 连接失败：%s", describe_error(reset_exc))
                 await asyncio.sleep(wait)
             except XApiError:
                 raise
@@ -185,10 +215,10 @@ class XClient:
                 last_error = exc
                 if attempt >= max_attempts - 1:
                     break
-                wait = min(20.0, 1.5 * (2 ** attempt))
-                logger.warning("%s 请求失败：%s，%.1fs 后重试", operation, exc, wait)
+                wait = min(20.0, 1.5 * (2 ** attempt)) + random.uniform(0.0, 1.0)
+                logger.warning("%s 请求失败（%s），%.1fs 后重试", operation, describe_error(exc), wait)
                 await asyncio.sleep(wait)
-        raise XApiError(f"{operation} 请求失败：{last_error}")
+        raise XApiError(f"{operation} 请求失败：{describe_error(last_error)}")
 
     async def _handle_response(
         self,

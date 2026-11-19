@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import ipaddress
 import logging
+import socket
 
 from .extract import extract_user
 from .gql import USER_FEATURES
@@ -9,11 +11,36 @@ from .xclient import XClient
 logger = logging.getLogger(__name__)
 
 
+def _network_hint(config) -> None:
+    fake_network = ipaddress.ip_network("198.18.0.0/15")
+    found_fake = False
+    for host in ("x.com", "pbs.twimg.com"):
+        try:
+            infos = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
+        except OSError as exc:
+            print(f"{host} 解析：FAIL {exc}")
+            continue
+        addresses = sorted({str(info[4][0]) for info in infos})
+        print(f"{host} 解析：{', '.join(addresses) or '(空)'}")
+        for address in addresses:
+            try:
+                if ipaddress.ip_address(address) in fake_network:
+                    found_fake = True
+            except ValueError:
+                pass
+    if found_fake and not config.sync.proxy:
+        print(
+            "提示：x.com 解析到 198.18.0.0/15（本地代理/VPN 的 fake-IP），"
+            "但设置里的代理为空。网络断流时请切换节点，或显式填写代理地址。"
+        )
+
+
 async def run_doctor(config) -> int:
     print("x-dynamics-3 doctor")
     print(f"数据目录：{config.data_dir}")
     print(f"数据库：{config.db_path}")
     print(f"Cookie：{'已配置' if config.has_cookie else '未配置'}")
+    _network_hint(config)
     if not config.has_cookie:
         print("失败：请先在 WebUI 设置页填写 auth_token 和 ct0。")
         return 2

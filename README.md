@@ -9,6 +9,7 @@
 - 用户列表存在 SQLite 中，可启用/停用、批量选择、增删用户
 - 同步固定使用 `UserMedia`：只抓取该用户带媒体的推文，启用/停用用户即可控制是否参与同步
 - 增量/全量同步，支持限制页数、限制媒体数、只抓元数据
+- 断点续传：每页保存下一次 cursor，网络失败、取消或达到页数上限后，下次同步从断点继续；只有成功完成才推进 `last_tweet_id`
 - 图片、视频、GIF/动图；原图优先，视频选最高码率 MP4
 - 引用、回复、长文 `note_tweet`、无媒体推文展示（无媒体内容主要来自旧数据迁移）
 - 失败/缺失/待下载媒体重试；404/410 标记失效，401/403 标记受限
@@ -123,7 +124,7 @@ data/
 ## WebUI 页面
 
 - **动态**：动态/媒体视图切换、最新/最早排序、无限滚动/分页、作者筛选、灯箱、视频播放；无媒体推文和失效媒体占位可见
-- **用户**：添加用户、启用/停用、批量同步、重试、刷新头像；导入集合单独分组
+- **用户**：添加用户、启用/停用、批量同步、重试、刷新头像；导入集合单独分组；有未完成同步时显示“有断点”，可清除断点
 - **任务**：任务队列、进度条、状态、日志尾部、取消
 - **设置**：Cookie、代理、同步参数、媒体参数、Web 显示、校验/补下/头像补全/导出
 - **指定推文**：URL/ID → 预览 → 下载；可选加入用户列表
@@ -146,8 +147,8 @@ data/
 :: 只同步一个用户
 .venv\Scripts\python -m xdyn sync --user @XDevelopers
 
-:: 覆盖本次全量历史，只抓元数据
-.venv\Scripts\python -m xdyn sync --user @XDevelopers --full --no-download --max-pages 10
+:: 全量历史（会重置该用户断点；只抓元数据可加 --no-download --max-pages 10）
+.venv\Scripts\python -m xdyn sync --user @XDevelopers --full
 
 :: 重试媒体
 .venv\Scripts\python -m xdyn retry --all
@@ -249,7 +250,7 @@ downloads/
 - Cookie 解析、设置存储、输入解析
 - 旧/新 X schema、转推、引用、长短文本、媒体
 - SQLite upsert、搜索、统计、媒体状态
-- 同步水位/全量截断
+- 同步水位/断点续传/全量截断
 - queryId 脚本解析
 - Web 页面、媒体/缩略图、视频占位、CSRF、路径穿越
 - 迁移：主媒体、文本、标签、评论区、profile、dry-run、幂等、reference 模式
@@ -257,6 +258,7 @@ downloads/
 ## 已知限制
 
 - X 的内部 GraphQL 接口没有公开 SLA，queryId、feature 和响应结构会变化；工具内置运行时刷新和自愈，但不能保证永久有效
+- 如果使用 Clash/Mihomo 等 TUN 代理，x.com 可能解析到 `198.18.0.0/15` 的 fake-IP；代理节点不稳定时会出现连接重置。`doctor` 会提示这种情况，可切换节点或显式填写代理
 - X 有时会在时间线末尾返回只含 cursor 的空页；同步默认连续 3 页无推文就停止，可在设置里调整“连续空页上限”
 - transaction 签名材料优先从公共 `https://x.com/i/embed` 获取（该页面仍提供 `ondemand.s`）；x-web 的 `home/tesla` 页面通常不直接暴露签名脚本，只作为回退
 - 如果 `doctor` 显示 `i/embed(public)` 401，先检查代理是否要求认证，或代理是否拦截了 x.com；如果显示 `UserByScreenName` 401/403，则是 Cookie 失效或账号受限

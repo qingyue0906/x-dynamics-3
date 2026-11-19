@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import random
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,7 +13,7 @@ import httpx
 
 from .config import Config
 from .db import Database
-from .errors import JobCancelled
+from .errors import JobCancelled, describe_error
 from .http import DEFAULT_UA
 from .utils import detect_media_kind, extension_for_content_type, media_kind, resolve_media_path
 
@@ -52,23 +53,40 @@ class Downloader:
         self.db = db
         self.config = config
         self.session: httpx.AsyncClient | None = None
+        self._session_lock = asyncio.Lock()
 
-    async def __aenter__(self) -> "Downloader":
+    def _new_session(self) -> httpx.AsyncClient:
         headers = {
             "User-Agent": DEFAULT_UA,
             "Referer": "https://x.com/",
             "Accept": "image/avif,image/webp,image/apng,image/*,video/*,*/*;q=0.8",
             "Accept-Language": "zh-CN,zh;q=0.9",
         }
-        self.session = httpx.AsyncClient(
+        return httpx.AsyncClient(
             proxy=self.config.sync.proxy or None,
             follow_redirects=True,
             timeout=httpx.Timeout(
                 self.config.sync.timeout,
                 connect=self.config.sync.connect_timeout,
             ),
+            limits=httpx.Limits(max_keepalive_connections=8, keepalive_expiry=30),
             headers=headers,
         )
+
+    async def _reset_session_if(self, session: httpx.AsyncClient | None) -> None:
+        async with self._session_lock:
+            if self.session is not session:
+                return
+            old = self.session
+            self.session = self._new_session()
+            if old is not None:
+                try:
+                    await old.aclose()
+                except Exception as exc:
+                    logger.debug("关闭旧下载连接失败：%s", describe_error(exc))
+
+    async def __aenter__(self) -> "Downloader":
+        self.session = self._new_session()
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
@@ -164,8 +182,10 @@ class Downloader:
             for attempt in range(retries + 1):
                 tries += 1
                 try:
-                    assert self.session is not None
-                    async with self.session.stream("GET", url) as response:
+                    session = self.session
+                    if session is None:
+                        raise RuntimeError("下载会话未初始化")
+                    async with session.stream("GET", url) as response:
                         status = response.status_code
                         if status == 200:
                             content_type = (
@@ -244,7 +264,8 @@ class Downloader:
 
                         last_error = f"HTTP {status}"
                         if attempt < retries:
-                            await asyncio.sleep(min(30.0, 2.0 * (2 ** attempt)))
+                            wait = min(30.0, 2.0 * (2 ** attempt)) + random.uniform(0.0, 1.0)
+                            await asyncio.sleep(wait)
                             continue
                         break
                 except asyncio.CancelledError:
@@ -253,10 +274,12 @@ class Downloader:
                     last_error = str(exc)
                     break
                 except Exception as exc:
-                    last_error = str(exc)
+                    last_error = describe_error(exc)
                     if attempt < retries:
-                        wait = min(30.0, 2.0 * (2 ** attempt))
-                        logger.warning("媒体 %s 下载失败：%s，%.1fs 后重试", media_id, exc, wait)
+                        if isinstance(exc, httpx.TransportError):
+                            await self._reset_session_if(session)
+                        wait = min(30.0, 2.0 * (2 ** attempt)) + random.uniform(0.0, 1.0)
+                        logger.warning("媒体 %s 下载失败（%s），%.1fs 后重试", media_id, describe_error(exc), wait)
                         await asyncio.sleep(wait)
                         continue
                     break

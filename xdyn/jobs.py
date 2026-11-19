@@ -48,7 +48,8 @@ def run_sync(
             if kind == "total":
                 ctx.update(total=int(event.get("total") or 0))
             elif kind == "user_start":
-                ctx.update(message=f"同步 {event.get('name')}")
+                suffix = "（断点续传）" if event.get("resumed") else ""
+                ctx.update(message=f"同步 {event.get('name')}{suffix}")
             elif kind == "page":
                 ctx.update(message=(
                     f"{event.get('name')} 第 {event.get('page')} 页："
@@ -71,7 +72,13 @@ def run_sync(
 
         results = asyncio.run(_run())
         failed = sum(1 for result in results if result.status != "ok")
-        ctx.update(done=len(results), message=f"同步结束：{len(results)} 个用户，失败 {failed} 个")
+        pending = sum(1 for result in results if "断点已保存" in (result.message or ""))
+        ctx.update(
+            done=len(results),
+            message=f"同步结束：{len(results)} 个用户，失败 {failed} 个，保留断点 {pending} 个",
+        )
+        if failed:
+            raise RuntimeError(f"{failed} 个用户同步失败，断点已保存；详见任务日志")
     finally:
         db.close()
 
