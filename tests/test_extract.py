@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from xdyn.extract import extract_timeline, extract_tweet, extract_user
+from xdyn.extract import extract_timeline, extract_timeline_page, extract_tweet, extract_user
 
 
 def user(rest_id="1", screen="alice", name="Alice"):
@@ -121,6 +121,52 @@ def test_quote_metadata():
     assert post.kind == "quote"
     assert post.quoted.tweet_id == "201"
     assert post.quoted.text == "quoted"
+
+
+def test_timeline_page_structures():
+    module_page = timeline([], instructions=[
+        {"type": "TimelineAddToModule", "moduleItems": [
+            {"item": {"itemContent": {"tweet_results": {"result": tweet("150")}}}},
+        ]},
+        {"type": "TimelineAddEntries", "entries": [
+            {"entryId": "cursor-top-1", "content": {"cursorType": "Top", "value": "TOP"}},
+            {"entryId": "cursor-bottom-1", "content": {"cursorType": "Bottom", "value": "NEXT"}},
+        ]},
+    ])
+    page = extract_timeline_page(module_page)
+    assert len(page.posts) == 1
+    assert page.cursor == "NEXT"
+    assert page.module_item_count == 1
+    assert page.has_content
+    assert not page.cursor_only
+
+    cursor_page = timeline([
+        {"entryId": "cursor-top-1", "content": {"cursorType": "Top", "value": "TOP"}},
+        {"entryId": "cursor-bottom-1", "content": {"cursorType": "Bottom", "value": "NEXT"}},
+    ])
+    page = extract_timeline_page(cursor_page)
+    assert page.posts == []
+    assert page.cursor == "NEXT"
+    assert page.cursor_only
+
+    top_terminate = timeline([], instructions=[
+        {"type": "TimelineTerminateTimeline", "direction": "Top"},
+        {"type": "TimelineAddEntries", "entries": [
+            {"entryId": "cursor-bottom-1", "content": {"cursorType": "Bottom", "value": "NEXT"}},
+        ]},
+    ])
+    page = extract_timeline_page(top_terminate)
+    assert page.terminated is False
+    assert page.cursor_only
+
+    bottom_terminate = timeline([], instructions=[
+        {"type": "TimelineTerminateTimeline", "direction": "Bottom"},
+        {"type": "TimelineAddEntries", "entries": [
+            {"entryId": "cursor-bottom-1", "content": {"cursorType": "Bottom", "value": "NEXT"}},
+        ]},
+    ])
+    page = extract_timeline_page(bottom_terminate)
+    assert page.terminated is True
 
 
 def test_extract_user_new_schema():

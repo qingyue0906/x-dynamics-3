@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import dataclass, field
 from typing import Any
 
 from .models import MediaRecord, PostRecord, QuotedPost
@@ -317,7 +318,25 @@ def extract_post(obj: Any, owner_screen_name: str = "", image_format: str = "ori
         return None
 
 
-def _walk(node: Any, tweets: list[dict], entry_ids: list[str]) -> None:
+@dataclass
+class TimelinePage:
+    posts: list[PostRecord] = field(default_factory=list)
+    cursor: str = ""
+    terminated: bool = False
+    content_entry_count: int = 0
+    module_item_count: int = 0
+
+    @property
+    def has_content(self) -> bool:
+        return bool(self.posts or self.content_entry_count or self.module_item_count)
+
+    @property
+    def cursor_only(self) -> bool:
+        """True for X's terminal page: cursors exist but no timeline content."""
+        return bool(self.cursor) and not self.has_content
+
+
+def _walk(node: Any, tweets: list[dict], entry_ids: list[str], state: dict) -> None:
     if isinstance(node, dict):
         typename = node.get("__typename")
         if typename in TWEET_TYPES and ("rest_id" in node or "legacy" in node):
@@ -325,21 +344,30 @@ def _walk(node: Any, tweets: list[dict], entry_ids: list[str]) -> None:
         entry_id = node.get("entryId")
         if isinstance(entry_id, str):
             entry_ids.append(entry_id)
+        if (
+            str(node.get("type") or "") == "TimelineTerminateTimeline"
+            and str(node.get("direction") or "").lower() == "bottom"
+        ):
+            state["terminated"] = True
+        module_items = node.get("moduleItems")
+        if isinstance(module_items, list):
+            state["module_item_count"] += len(module_items)
         for value in node.values():
-            _walk(value, tweets, entry_ids)
+            _walk(value, tweets, entry_ids, state)
     elif isinstance(node, list):
         for value in node:
-            _walk(value, tweets, entry_ids)
+            _walk(value, tweets, entry_ids, state)
 
 
-def extract_timeline(
+def extract_timeline_page(
     payload: Any,
     owner_screen_name: str = "",
     image_format: str = "orig",
-) -> tuple[list[PostRecord], str]:
+) -> TimelinePage:
     tweets: list[dict] = []
     entry_ids: list[str] = []
-    _walk(payload, tweets, entry_ids)
+    state = {"terminated": False, "module_item_count": 0}
+    _walk(payload, tweets, entry_ids, state)
     standalone = set()
     for entry_id in entry_ids:
         match = ENTRY_TWEET_RE.search(entry_id)
@@ -352,7 +380,7 @@ def extract_timeline(
             ref = _ref_id(base, key)
             if ref:
                 referenced.add(ref)
-    result: list[PostRecord] = []
+    posts: list[PostRecord] = []
     seen: set[str] = set()
     for raw in tweets:
         normalized = extract_post(raw, owner_screen_name=owner_screen_name, image_format=image_format)
@@ -363,7 +391,7 @@ def extract_timeline(
         if normalized.tweet_id in seen:
             continue
         seen.add(normalized.tweet_id)
-        result.append(normalized)
+        posts.append(normalized)
 
     cursor = ""
     def find_cursor(node: Any) -> None:
@@ -381,7 +409,29 @@ def extract_timeline(
             for value in node:
                 find_cursor(value)
     find_cursor(payload)
-    return result, cursor
+    content_entry_count = sum(
+        1 for entry_id in entry_ids if not entry_id.lower().startswith("cursor")
+    )
+    return TimelinePage(
+        posts=posts,
+        cursor=cursor,
+        terminated=bool(state["terminated"]),
+        content_entry_count=content_entry_count,
+        module_item_count=int(state["module_item_count"]),
+    )
+
+
+def extract_timeline(
+    payload: Any,
+    owner_screen_name: str = "",
+    image_format: str = "orig",
+) -> tuple[list[PostRecord], str]:
+    page = extract_timeline_page(
+        payload,
+        owner_screen_name=owner_screen_name,
+        image_format=image_format,
+    )
+    return page.posts, page.cursor
 
 
 def extract_tweet(payload: Any, tweet_id: str = "", image_format: str = "orig") -> PostRecord | None:

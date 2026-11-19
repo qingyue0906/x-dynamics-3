@@ -14,7 +14,7 @@ from .db import Database
 from .download import DownloadStats, Downloader
 from .errors import JobCancelled, describe_error
 from .export import export_user
-from .extract import extract_timeline
+from .extract import extract_timeline_page
 from .utils import parse_user_input, slugify_name
 
 logger = logging.getLogger(__name__)
@@ -241,6 +241,7 @@ async def sync_user(
     seen_cursors: set[str] = {cursor} if cursor else set()
     stopped_by_limit = False
     stopped_by_cursor = False
+    stopped_by_anomaly = False
     session_completed = False
     empty_retry = 0
     empty_pages = 0
@@ -256,35 +257,30 @@ async def sync_user(
             if cancel_check:
                 cancel_check()
             payload = await client.fetch_page(rest_id, cursor, count=config.sync.page_size)
-            posts, next_cursor = extract_timeline(
+            page = extract_timeline_page(
                 payload,
                 owner_screen_name=str(user["screen_name"] or ""),
                 image_format=config.sync.image_format,
             )
+            posts, next_cursor = page.posts, page.cursor
             pages_done = result.pages + 1
             if not posts:
-                empty_pages += 1
-                if next_cursor == cursor:
-                    if empty_retry < 1:
-                        empty_retry += 1
-                        logger.warning("  第 %d 页为空，可能限流或数据延迟，重试一次", pages_done)
-                        await polite_sleep(config)
-                        continue
-                    result.pages = pages_done
-                    session_completed = True
-                    logger.warning(
-                        "  第 %d 页为空且 cursor 未推进，视为时间线结束",
-                        pages_done,
-                    )
-                    break
-                if empty_pages >= config.sync.max_empty_pages:
-                    result.pages = pages_done
-                    session_completed = True
-                    logger.warning(
-                        "  连续 %d 页没有解析到推文，视为时间线结束（第 %d 页）",
-                        empty_pages, pages_done,
-                    )
-                    break
+                if page.has_content and not page.cursor_only and not page.terminated:
+                    empty_pages += 1
+                    if empty_pages >= config.sync.max_empty_pages:
+                        result.pages = pages_done
+                        stopped_by_anomaly = True
+                        logger.warning(
+                            "  连续 %d 页有内容但没有解析到推文，疑似接口/解析异常"
+                            "（第 %d 页）；已保留断点并停止，不推进同步水位",
+                            empty_pages, pages_done,
+                        )
+                        break
+                elif not page.cursor_only and not page.terminated and next_cursor == cursor and empty_retry < 1:
+                    empty_retry += 1
+                    logger.warning("  第 %d 页为空，可能限流或数据延迟，重试一次", pages_done)
+                    await polite_sleep(config)
+                    continue
             else:
                 empty_pages = 0
                 empty_retry = 0
@@ -358,6 +354,14 @@ async def sync_user(
                 "new_media": result.new_media, "downloaded": result.download.ok,
             })
 
+            if page.terminated:
+                session_completed = True
+                logger.info("  第 %d 页收到时间线终止信号（Bottom），视为结束", pages_done)
+                break
+            if page.cursor_only:
+                session_completed = True
+                logger.info("  第 %d 页只有 cursor、没有内容，视为时间线结束", pages_done)
+                break
             if not full and stop_id > 0 and page_max and page_max <= stop_id:
                 session_completed = True
                 break
@@ -389,7 +393,9 @@ async def sync_user(
             db.set_last_tweet_id(user_id, seen_max, int(time.time()))
             db.clear_sync_session(user_id)
         result.status = "ok"
-        if stopped_by_cursor:
+        if stopped_by_anomaly:
+            result.message = "连续空页达到上限，疑似接口/解析异常；断点已保存，下次同步继续"
+        elif stopped_by_cursor:
             result.status = "failed"
             result.message = "cursor 未推进，断点已保存；请清除断点或使用全量同步"
         elif stopped_by_limit and not session_completed:
@@ -407,7 +413,7 @@ async def sync_user(
             result.name, user["screen_name"], result.pages, result.new_posts, result.new_media,
             result.download.ok, result.download.skipped, result.download.failed,
             result.download.dead, result.download.restricted,
-            "；断点已保存" if (stopped_by_limit or stopped_by_cursor) and not session_completed else "",
+            "；断点已保存" if (stopped_by_limit or stopped_by_cursor or stopped_by_anomaly) and not session_completed else "",
         )
         return result
     except JobCancelled:

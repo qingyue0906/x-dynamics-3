@@ -36,6 +36,22 @@ def tweet(rest_id, text="hello", created="Mon Jan 01 12:00:00 +0000 2024"):
     }
 
 
+def timeline_payload(instructions):
+    return {
+        "data": {
+            "user": {
+                "result": {
+                    "timeline_v2": {
+                        "timeline": {
+                            "instructions": instructions,
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
 def page(ids, cursor=""):
     entries = [
         {"entryId": f"tweet-{rest_id}", "content": {"itemContent": {"tweet_results": {"result": tweet(rest_id)}}}}
@@ -43,9 +59,17 @@ def page(ids, cursor=""):
     ]
     if cursor:
         entries.append({"entryId": "cursor-bottom-1", "content": {"cursorType": "Bottom", "value": cursor}})
-    return {"data": {"user": {"result": {"timeline_v2": {"timeline": {"instructions": [
-        {"type": "TimelineAddEntries", "entries": entries}
-    ]}}}}}}
+    return timeline_payload([{"type": "TimelineAddEntries", "entries": entries}])
+
+
+def empty_content_page(cursor):
+    return timeline_payload([{
+        "type": "TimelineAddEntries",
+        "entries": [
+            {"entryId": "profile-grid-0", "content": {"items": []}},
+            {"entryId": "cursor-bottom-1", "content": {"cursorType": "Bottom", "value": cursor}},
+        ],
+    }])
 
 
 class FakeClient:
@@ -102,21 +126,48 @@ def test_full_mode_keeps_old_watermark_when_limited(tmp_path):
         db.close()
 
 
-def test_sync_stops_after_consecutive_empty_pages(tmp_path):
+def test_sync_warns_and_pauses_after_abnormal_empty_pages(tmp_path):
+    config = load_config(base_dir=tmp_path, data_dir=tmp_path / "data", sleep=0)
+    db = Database(config.db_path)
+    user_id = db.upsert_user(rest_id="1", screen_name="alice", name="Alice", image_dir="images/alice")
+    client = FakeClient({
+        "": page([102, 101], "p2"),
+        "p2": empty_content_page("p3"),
+        "p3": empty_content_page("p4"),
+        "p4": empty_content_page("p5"),
+        "p5": page([99], "p6"),
+    })
+    try:
+        result = asyncio.run(sync_user(db, config, client, None, db.get_user(user_id), no_download=True))
+        assert result.status == "ok"
+        assert result.pages == 4
+        assert "异常" in result.message
+        assert client.calls == ["", "p2", "p3", "p4"]
+        user = db.get_user(user_id)
+        assert user["last_tweet_id"] == "0"
+        assert user["sync_active"] == 1
+        assert user["sync_cursor"] == "p4"
+    finally:
+        db.close()
+
+
+def test_sync_stops_on_cursor_only_page(tmp_path):
     config = load_config(base_dir=tmp_path, data_dir=tmp_path / "data", sleep=0)
     db = Database(config.db_path)
     user_id = db.upsert_user(rest_id="1", screen_name="alice", name="Alice", image_dir="images/alice")
     client = FakeClient({
         "": page([102, 101], "p2"),
         "p2": page([], "p3"),
-        "p3": page([], "p4"),
-        "p4": page([], "p5"),
-        "p5": page([], "p6"),
+        "p3": page([99], "p4"),
     })
     try:
         result = asyncio.run(sync_user(db, config, client, None, db.get_user(user_id), no_download=True))
-        assert result.pages == 4
-        assert client.calls == ["", "p2", "p3", "p4"]
+        assert result.status == "ok"
+        assert result.pages == 2
+        assert client.calls == ["", "p2"]
+        user = db.get_user(user_id)
+        assert user["last_tweet_id"] == "102"
+        assert user["sync_active"] == 0
     finally:
         db.close()
 
